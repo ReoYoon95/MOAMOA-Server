@@ -100,7 +100,7 @@ class ScheduleService(
 
         // 한쪽만 보내도 수정 결과 기준으로 종료 일시가 시작 일시보다 이전이면 안 됨
         val startsAt = request.startAt ?: schedule.startsAt
-        val endedAt = request.endAt ?: schedule.endedAt
+        val endedAt = if (request.endAt == null) schedule.endedAt else request.endAt.orElse(null)
         if (endedAt != null && endedAt.isBefore(startsAt)) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "종료 일시는 시작 일시 이후여야 합니다.")
         }

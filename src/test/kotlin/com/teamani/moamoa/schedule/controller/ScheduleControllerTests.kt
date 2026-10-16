@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.server.ResponseStatusException
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.util.Optional
 
 class ScheduleControllerTests : BehaviorSpec({
 
@@ -32,28 +33,29 @@ class ScheduleControllerTests : BehaviorSpec({
     val mockMvc: MockMvc = MockMvcBuilders.standaloneSetup(scheduleController).build()
 
     // 요청 일시는 역직렬화 시 오프셋이 바뀌어도 equals가 유지되도록 UTC(Z)로 작성
+    // 요청 시작 일시는 과거 검증을 통과하도록 미래 날짜로 작성
     Given("유효한 일정 생성 요청(POST /v1/meetings/{meetingId}/schedules)이 주어졌을 때") {
         val meetingId = 1L
         val requestJson = """
             {
               "title": "10월 정기 러닝",
               "description": "반포 한강공원 집합",
-              "startAt": "2026-10-10T22:00:00Z",
-              "endAt": "2026-10-11T00:00:00Z",
+              "startAt": "2099-10-10T22:00:00Z",
+              "endAt": "2099-10-11T00:00:00Z",
               "location": "반포 한강공원"
             }
         """.trimIndent()
         val request = ScheduleCreateRequest(
             title = "10월 정기 러닝",
             description = "반포 한강공원 집합",
-            startAt = OffsetDateTime.parse("2026-10-10T22:00:00Z"),
-            endAt = OffsetDateTime.parse("2026-10-11T00:00:00Z"),
+            startAt = OffsetDateTime.parse("2099-10-10T22:00:00Z"),
+            endAt = OffsetDateTime.parse("2099-10-11T00:00:00Z"),
             location = "반포 한강공원"
         )
         val mockResponse = ScheduleCreateResponse(
             scheduleId = 20L,
             title = "10월 정기 러닝",
-            startAt = OffsetDateTime.parse("2026-10-11T07:00:00+09:00")
+            startAt = OffsetDateTime.parse("2099-10-11T07:00:00+09:00")
         )
 
         `when`(scheduleService.createSchedule(meetingId, 1L, request)).thenReturn(mockResponse)
@@ -78,15 +80,16 @@ class ScheduleControllerTests : BehaviorSpec({
         }
     }
 
-    Given("필수값이 누락되었거나 일시 순서가 잘못된 일정 생성 요청이 주어졌을 때") {
+    Given("필수값이 누락되었거나 일시가 잘못된 일정 생성 요청이 주어졌을 때") {
         val meetingId = 1L
         val invalidRequests = mapOf(
-            "title 누락" to """{ "startAt": "2026-10-10T22:00:00Z" }""",
-            "공백 title" to """{ "title": "   ", "startAt": "2026-10-10T22:00:00Z" }""",
+            "title 누락" to """{ "startAt": "2099-10-10T22:00:00Z" }""",
+            "공백 title" to """{ "title": "   ", "startAt": "2099-10-10T22:00:00Z" }""",
             "startAt 누락" to """{ "title": "10월 정기 러닝" }""",
             "endAt이 startAt보다 이전" to """
-                { "title": "10월 정기 러닝", "startAt": "2026-10-10T22:00:00Z", "endAt": "2026-10-10T21:00:00Z" }
-            """.trimIndent()
+                { "title": "10월 정기 러닝", "startAt": "2099-10-10T22:00:00Z", "endAt": "2099-10-10T21:00:00Z" }
+            """.trimIndent(),
+            "과거 startAt" to """{ "title": "10월 정기 러닝", "startAt": "2020-10-10T22:00:00Z" }"""
         )
 
         invalidRequests.forEach { (case, requestJson) ->
@@ -249,17 +252,17 @@ class ScheduleControllerTests : BehaviorSpec({
     Given("유효한 일정 수정 요청(PATCH /v1/meetings/{meetingId}/schedules/{scheduleId})이 주어졌을 때") {
         val meetingId = 1L
         val scheduleId = 20L
-        val requestJson = """{ "startAt": "2026-10-10T23:00:00Z", "endAt": "2026-10-11T01:00:00Z" }"""
+        val requestJson = """{ "startAt": "2099-10-10T23:00:00Z", "endAt": "2099-10-11T01:00:00Z" }"""
         val request = ScheduleUpdateRequest(
-            startAt = OffsetDateTime.parse("2026-10-10T23:00:00Z"),
-            endAt = OffsetDateTime.parse("2026-10-11T01:00:00Z")
+            startAt = OffsetDateTime.parse("2099-10-10T23:00:00Z"),
+            endAt = Optional.of(OffsetDateTime.parse("2099-10-11T01:00:00Z"))
         )
         val mockResponse = ScheduleDetailResponse(
             scheduleId = scheduleId,
             title = "10월 정기 러닝",
             description = "반포 한강공원 집합",
-            startAt = OffsetDateTime.parse("2026-10-11T08:00:00+09:00"),
-            endAt = OffsetDateTime.parse("2026-10-11T10:00:00+09:00"),
+            startAt = OffsetDateTime.parse("2099-10-11T08:00:00+09:00"),
+            endAt = OffsetDateTime.parse("2099-10-11T10:00:00+09:00"),
             location = "반포 한강공원"
         )
 
@@ -288,12 +291,13 @@ class ScheduleControllerTests : BehaviorSpec({
         }
     }
 
-    Given("제목이 공백이거나 너무 긴 일정 수정 요청이 주어졌을 때") {
+    Given("제목·장소가 잘못되었거나 시작 일시가 과거인 일정 수정 요청이 주어졌을 때") {
         val invalidRequests = mapOf(
             "공백 title" to """{ "title": "   " }""",
             "빈 문자열 title" to """{ "title": "" }""",
             "100자 초과 title" to """{ "title": "${"가".repeat(101)}" }""",
-            "255자 초과 location" to """{ "location": "${"가".repeat(256)}" }"""
+            "255자 초과 location" to """{ "location": "${"가".repeat(256)}" }""",
+            "과거 startAt" to """{ "startAt": "2020-10-10T22:00:00Z" }"""
         )
 
         invalidRequests.forEach { (case, requestJson) ->
@@ -312,7 +316,7 @@ class ScheduleControllerTests : BehaviorSpec({
     }
 
     Given("수정 결과 종료 일시가 시작 일시보다 이전이 되는 일정 수정 요청이 주어졌을 때") {
-        val request = ScheduleUpdateRequest(endAt = OffsetDateTime.parse("2026-10-10T20:00:00Z"))
+        val request = ScheduleUpdateRequest(endAt = Optional.of(OffsetDateTime.parse("2099-10-10T20:00:00Z")))
 
         `when`(scheduleService.updateSchedule(1L, 1L, 20L, request))
             .thenThrow(ResponseStatusException(HttpStatus.BAD_REQUEST, "종료 일시는 시작 일시 이후여야 합니다."))
@@ -321,11 +325,41 @@ class ScheduleControllerTests : BehaviorSpec({
             val resultActions = mockMvc.perform(
                 patch("/v1/meetings/1/schedules/20")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content("""{ "endAt": "2026-10-10T20:00:00Z" }""")
+                    .content("""{ "endAt": "2099-10-10T20:00:00Z" }""")
             )
 
             Then("400 Bad Request를 반환한다") {
                 resultActions.andExpect(status().isBadRequest)
+            }
+        }
+    }
+
+    Given("종료 일시만 null로 보내는 일정 수정 요청이 주어졌을 때") {
+        // null 전송은 Optional.empty, 미전송 필드는 null로 받아야 Service가 비우기/유지를 구분할 수 있음
+        val request = ScheduleUpdateRequest(endAt = Optional.empty())
+        val mockResponse = ScheduleDetailResponse(
+            scheduleId = 20L,
+            title = "10월 정기 러닝",
+            description = "반포 한강공원 집합",
+            startAt = OffsetDateTime.parse("2099-10-11T07:00:00+09:00"),
+            endAt = null,
+            location = "반포 한강공원"
+        )
+
+        `when`(scheduleService.updateSchedule(1L, 1L, 20L, request)).thenReturn(mockResponse)
+
+        When("수정 API를 호출하면") {
+            val resultActions = mockMvc.perform(
+                patch("/v1/meetings/1/schedules/20")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{ "endAt": null }""")
+            )
+
+            Then("200 OK 응답과 종료 일시가 비워진 일정이 반환된다") {
+                resultActions
+                    .andExpect(status().isOk)
+                    .andExpect(jsonPath("$.data.endAt").doesNotExist())
+                    .andExpect(jsonPath("$.data.location").value("반포 한강공원"))
             }
         }
     }

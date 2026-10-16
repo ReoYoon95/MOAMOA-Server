@@ -20,6 +20,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.web.server.ResponseStatusException
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.util.Optional
 
 class ScheduleServiceTests : BehaviorSpec({
 
@@ -195,7 +196,7 @@ class ScheduleServiceTests : BehaviorSpec({
             val schedule = stubSchedule()
             val request = ScheduleUpdateRequest(
                 startAt = OffsetDateTime.parse("2026-10-10T23:00:00Z"),
-                endAt = OffsetDateTime.parse("2026-10-11T01:00:00Z")
+                endAt = Optional.of(OffsetDateTime.parse("2026-10-11T01:00:00Z"))
             )
             val response = scheduleService.updateSchedule(meetingId, 1L, scheduleId, request)
 
@@ -211,7 +212,11 @@ class ScheduleServiceTests : BehaviorSpec({
 
         When("제목·설명·장소만 보내면") {
             stubSchedule()
-            val request = ScheduleUpdateRequest(title = "10월 번개 러닝", description = "잠수교 집합", location = "잠수교")
+            val request = ScheduleUpdateRequest(
+                title = "10월 번개 러닝",
+                description = Optional.of("잠수교 집합"),
+                location = Optional.of("잠수교")
+            )
             val response = scheduleService.updateSchedule(meetingId, 1L, scheduleId, request)
 
             Then("해당 필드만 변경되고 일시는 유지된다") {
@@ -225,7 +230,7 @@ class ScheduleServiceTests : BehaviorSpec({
 
         When("기존 시작 일시보다 이전인 종료 일시만 보내면") {
             val schedule = stubSchedule()
-            val request = ScheduleUpdateRequest(endAt = OffsetDateTime.parse("2026-10-11T06:00:00+09:00"))
+            val request = ScheduleUpdateRequest(endAt = Optional.of(OffsetDateTime.parse("2026-10-11T06:00:00+09:00")))
             val exception = shouldThrow<ResponseStatusException> {
                 scheduleService.updateSchedule(meetingId, 1L, scheduleId, request)
             }
@@ -245,6 +250,24 @@ class ScheduleServiceTests : BehaviorSpec({
 
             Then("400 Bad Request 예외가 발생한다") {
                 exception.statusCode shouldBe HttpStatus.BAD_REQUEST
+            }
+        }
+
+        When("설명·종료 일시·장소를 null로 보내면") {
+            stubSchedule()
+            val request = ScheduleUpdateRequest(
+                description = Optional.empty(),
+                endAt = Optional.empty(),
+                location = Optional.empty()
+            )
+            val response = scheduleService.updateSchedule(meetingId, 1L, scheduleId, request)
+
+            Then("해당 값만 비워지고 제목·시작 일시는 유지된다") {
+                response.description shouldBe null
+                response.endAt shouldBe null
+                response.location shouldBe null
+                response.title shouldBe "10월 정기 러닝"
+                response.startAt.toString() shouldBe "2026-10-11T07:00+09:00"
             }
         }
     }
