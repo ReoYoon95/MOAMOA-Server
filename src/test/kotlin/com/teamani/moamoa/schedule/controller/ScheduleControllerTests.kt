@@ -263,7 +263,7 @@ class ScheduleControllerTests : BehaviorSpec({
         val scheduleId = 20L
         val requestJson = """{ "startAt": "2099-10-10T23:00:00Z", "endAt": "2099-10-11T01:00:00Z" }"""
         val request = ScheduleUpdateRequest(
-            startAt = OffsetDateTime.parse("2099-10-10T23:00:00Z"),
+            startAt = Optional.of(OffsetDateTime.parse("2099-10-10T23:00:00Z")),
             endAt = Optional.of(OffsetDateTime.parse("2099-10-11T01:00:00Z"))
         )
         val mockResponse = ScheduleDetailResponse(
@@ -300,13 +300,15 @@ class ScheduleControllerTests : BehaviorSpec({
         }
     }
 
-    Given("제목·장소가 잘못되었거나 시작 일시가 과거인 일정 수정 요청이 주어졌을 때") {
+    Given("제목·장소가 잘못되었거나 시작 일시가 과거이거나 필수 항목을 null로 보낸 일정 수정 요청이 주어졌을 때") {
         val invalidRequests = mapOf(
             "공백 title" to """{ "title": "   " }""",
             "빈 문자열 title" to """{ "title": "" }""",
             "100자 초과 title" to """{ "title": "${"가".repeat(101)}" }""",
             "255자 초과 location" to """{ "location": "${"가".repeat(256)}" }""",
-            "과거 startAt" to """{ "startAt": "2020-10-10T22:00:00Z" }"""
+            "과거 startAt" to """{ "startAt": "2020-10-10T22:00:00Z" }""",
+            "null title" to """{ "title": null }""",
+            "null startAt" to """{ "startAt": null }"""
         )
 
         invalidRequests.forEach { (case, requestJson) ->
@@ -317,8 +319,10 @@ class ScheduleControllerTests : BehaviorSpec({
                         .content(requestJson)
                 )
 
-                Then("400 Bad Request를 반환한다") {
-                    resultActions.andExpect(status().isBadRequest)
+                Then("400 Bad Request와 VALIDATION_ERROR를 반환한다") {
+                    resultActions
+                        .andExpect(status().isBadRequest)
+                        .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"))
                 }
             }
         }
@@ -374,7 +378,7 @@ class ScheduleControllerTests : BehaviorSpec({
     }
 
     Given("존재하지 않는 일정의 수정 요청이 주어졌을 때") {
-        val request = ScheduleUpdateRequest(title = "변경된 제목")
+        val request = ScheduleUpdateRequest(title = Optional.of("변경된 제목"))
 
         `when`(scheduleService.updateSchedule(1L, 1L, 999L, request))
             .thenThrow(ApiException(ErrorCode.NOT_FOUND, "일정을 찾을 수 없습니다."))

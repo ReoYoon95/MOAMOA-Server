@@ -53,24 +53,36 @@ data class ScheduleSummaryResponse(
 )
 
 // 부분 수정: 보내지 않은 필드는 변경하지 않음 (종료 일시 순서는 기존 값과 합친 결과로 Service에서 검증)
-// 선택 항목(description, endAt, location)은 미전송(null)과 null 전송(Optional.empty)을 구분해 null 전송 시 값을 비움
+// 미전송(null)과 null 전송(Optional.empty)을 구분해 선택 항목(description, endAt, location)은 값을 비우고,
+// 필수 항목(title, startAt)은 VALIDATION_ERROR로 거부
+// Optional 안의 값을 검증하도록 제약에 Unwrap 지정
 data class ScheduleUpdateRequest(
-    @field:Pattern(regexp = "(?s).*\\S.*", message = "일정 제목은 공백일 수 없습니다.")
-    @field:Size(max = 100, message = "제목은 100자 이하여야 합니다.")
-    val title: String? = null,
+    @field:Pattern(regexp = "(?s).*\\S.*", message = "일정 제목은 공백일 수 없습니다.", payload = [Unwrapping.Unwrap::class])
+    @field:Size(max = 100, message = "제목은 100자 이하여야 합니다.", payload = [Unwrapping.Unwrap::class])
+    val title: Optional<String>? = null,
 
     val description: Optional<String>? = null,
 
     // 보낸 경우에만 검증하므로 지난 일정의 다른 항목 수정은 허용
-    @field:FutureOrPresent(message = "시작 일시는 현재 시각 이후여야 합니다.")
-    val startAt: OffsetDateTime? = null,
+    @field:FutureOrPresent(message = "시작 일시는 현재 시각 이후여야 합니다.", payload = [Unwrapping.Unwrap::class])
+    val startAt: Optional<OffsetDateTime>? = null,
 
     val endAt: Optional<OffsetDateTime>? = null,
 
-    // Optional 안의 문자열 길이를 검증하도록 Unwrap 지정
     @field:Size(max = 255, message = "장소는 255자 이하여야 합니다.", payload = [Unwrapping.Unwrap::class])
     val location: Optional<String>? = null
-)
+) {
+    // 필수 항목은 null로 비울 수 없음
+    @get:JsonIgnore
+    @get:AssertTrue(message = "일정 제목은 비울 수 없습니다.")
+    val isTitleNotCleared: Boolean
+        get() = title?.isPresent ?: true
+
+    @get:JsonIgnore
+    @get:AssertTrue(message = "시작 일시는 비울 수 없습니다.")
+    val isStartAtNotCleared: Boolean
+        get() = startAt?.isPresent ?: true
+}
 
 data class ScheduleDeleteResponse(
     val scheduleId: Long

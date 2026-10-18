@@ -195,7 +195,7 @@ class ScheduleServiceTests : BehaviorSpec({
         When("시작·종료 일시만 보내면") {
             val schedule = stubSchedule()
             val request = ScheduleUpdateRequest(
-                startAt = OffsetDateTime.parse("2026-10-10T23:00:00Z"),
+                startAt = Optional.of(OffsetDateTime.parse("2026-10-10T23:00:00Z")),
                 endAt = Optional.of(OffsetDateTime.parse("2026-10-11T01:00:00Z"))
             )
             val response = scheduleService.updateSchedule(meetingId, 1L, scheduleId, request)
@@ -206,14 +206,14 @@ class ScheduleServiceTests : BehaviorSpec({
                 response.location shouldBe "반포 한강공원"
                 response.startAt.toString() shouldBe "2026-10-11T08:00+09:00"
                 response.endAt.toString() shouldBe "2026-10-11T10:00+09:00"
-                schedule.startsAt shouldBe request.startAt
+                schedule.startsAt shouldBe request.startAt?.get()
             }
         }
 
         When("제목·설명·장소만 보내면") {
             stubSchedule()
             val request = ScheduleUpdateRequest(
-                title = "10월 번개 러닝",
+                title = Optional.of("10월 번개 러닝"),
                 description = Optional.of("잠수교 집합"),
                 location = Optional.of("잠수교")
             )
@@ -243,7 +243,7 @@ class ScheduleServiceTests : BehaviorSpec({
 
         When("기존 종료 일시보다 이후인 시작 일시만 보내면") {
             stubSchedule()
-            val request = ScheduleUpdateRequest(startAt = OffsetDateTime.parse("2026-10-11T10:00:00+09:00"))
+            val request = ScheduleUpdateRequest(startAt = Optional.of(OffsetDateTime.parse("2026-10-11T10:00:00+09:00")))
             val exception = shouldThrow<ApiException> {
                 scheduleService.updateSchedule(meetingId, 1L, scheduleId, request)
             }
@@ -275,7 +275,7 @@ class ScheduleServiceTests : BehaviorSpec({
     Given("없거나 다른 모임에 속한 일정을 수정하려 할 때") {
         When("updateSchedule 메서드를 호출하면") {
             val exception = shouldThrow<ApiException> {
-                scheduleService.updateSchedule(1L, 1L, 999L, ScheduleUpdateRequest(title = "변경된 제목"))
+                scheduleService.updateSchedule(1L, 1L, 999L, ScheduleUpdateRequest(title = Optional.of("변경된 제목")))
             }
 
             Then("NOT_FOUND 예외가 발생한다") {

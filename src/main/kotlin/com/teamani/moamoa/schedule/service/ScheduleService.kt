@@ -99,14 +99,21 @@ class ScheduleService(
             ?: throw ApiException(ErrorCode.NOT_FOUND, "일정을 찾을 수 없습니다.")
 
         // 한쪽만 보내도 수정 결과 기준으로 종료 일시가 시작 일시보다 이전이면 안 됨
-        val startsAt = request.startAt ?: schedule.startsAt
+        val startsAt = request.startAt?.orElse(null) ?: schedule.startsAt
         val endedAt = if (request.endAt == null) schedule.endedAt else request.endAt.orElse(null)
         if (endedAt != null && endedAt.isBefore(startsAt)) {
             throw ApiException(ErrorCode.VALIDATION_ERROR, "종료 일시는 시작 일시 이후여야 합니다.")
         }
 
         // 변경 감지(Dirty Checking)로 트랜잭션 종료 시 반영
-        schedule.update(request.title, request.description, request.startAt, request.endAt, request.location)
+        // 필수 항목의 null 전송은 DTO 검증에서 거부되므로 여기서는 값이 있거나 미전송인 경우만 남음
+        schedule.update(
+            request.title?.orElse(null),
+            request.description,
+            request.startAt?.orElse(null),
+            request.endAt,
+            request.location
+        )
 
         return toDetailResponse(schedule)
     }
