@@ -11,9 +11,10 @@ import jakarta.validation.valueextraction.Unwrapping
 import java.time.OffsetDateTime
 import java.util.Optional
 
+// 종료 일시가 시작 일시 이후인지는 수정 API와 같은 규칙으로 Service에서 검증
 data class ScheduleCreateRequest(
     @field:NotBlank(message = "일정 제목은 필수입니다.")
-    @field:Size(max = 100, message = "제목은 100자 이하여야 합니다.")
+    @field:Size(max = 50, message = "제목은 50자 이하여야 합니다.")
     val title: String?,
 
     val description: String? = null,
@@ -26,13 +27,7 @@ data class ScheduleCreateRequest(
 
     @field:Size(max = 255, message = "장소는 255자 이하여야 합니다.")
     val location: String? = null
-) {
-    // 종료 일시가 있으면 시작 일시보다 이전일 수 없음
-    @get:JsonIgnore
-    @get:AssertTrue(message = "종료 일시는 시작 일시 이후여야 합니다.")
-    val isEndAtAfterStartAt: Boolean
-        get() = startAt == null || endAt == null || !endAt.isBefore(startAt)
-}
+)
 
 data class ScheduleCreateResponse(
     val scheduleId: Long,
@@ -58,7 +53,7 @@ data class ScheduleSummaryResponse(
 // Optional 안의 값을 검증하도록 제약에 Unwrap 지정
 data class ScheduleUpdateRequest(
     @field:Pattern(regexp = "(?s).*\\S.*", message = "일정 제목은 공백일 수 없습니다.", payload = [Unwrapping.Unwrap::class])
-    @field:Size(max = 100, message = "제목은 100자 이하여야 합니다.", payload = [Unwrapping.Unwrap::class])
+    @field:Size(max = 50, message = "제목은 50자 이하여야 합니다.", payload = [Unwrapping.Unwrap::class])
     val title: Optional<String>? = null,
 
     val description: Optional<String>? = null,

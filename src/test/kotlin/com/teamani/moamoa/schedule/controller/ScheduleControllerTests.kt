@@ -89,10 +89,8 @@ class ScheduleControllerTests : BehaviorSpec({
             "title 누락" to """{ "startAt": "2099-10-10T22:00:00Z" }""",
             "공백 title" to """{ "title": "   ", "startAt": "2099-10-10T22:00:00Z" }""",
             "startAt 누락" to """{ "title": "10월 정기 러닝" }""",
-            "endAt이 startAt보다 이전" to """
-                { "title": "10월 정기 러닝", "startAt": "2099-10-10T22:00:00Z", "endAt": "2099-10-10T21:00:00Z" }
-            """.trimIndent(),
-            "과거 startAt" to """{ "title": "10월 정기 러닝", "startAt": "2020-10-10T22:00:00Z" }"""
+            "과거 startAt" to """{ "title": "10월 정기 러닝", "startAt": "2020-10-10T22:00:00Z" }""",
+            "50자 초과 title" to """{ "title": "${"가".repeat(51)}", "startAt": "2099-10-10T22:00:00Z" }"""
         )
 
         invalidRequests.forEach { (case, requestJson) ->
@@ -106,6 +104,31 @@ class ScheduleControllerTests : BehaviorSpec({
                 Then("400 Bad Request를 반환한다") {
                     resultActions.andExpect(status().isBadRequest)
                 }
+            }
+        }
+    }
+
+    Given("종료 일시가 시작 일시보다 이전인 일정 생성 요청이 주어졌을 때") {
+        val request = ScheduleCreateRequest(
+            title = "10월 정기 러닝",
+            startAt = OffsetDateTime.parse("2099-10-10T22:00:00Z"),
+            endAt = OffsetDateTime.parse("2099-10-10T21:00:00Z")
+        )
+
+        `when`(scheduleService.createSchedule(1L, 1L, request))
+            .thenThrow(ApiException(ErrorCode.VALIDATION_ERROR, "종료 일시는 시작 일시 이후여야 합니다."))
+
+        When("생성 API를 호출하면") {
+            val resultActions = mockMvc.perform(
+                post("/v1/meetings/1/schedules")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{ "title": "10월 정기 러닝", "startAt": "2099-10-10T22:00:00Z", "endAt": "2099-10-10T21:00:00Z" }""")
+            )
+
+            Then("400 Bad Request와 VALIDATION_ERROR 공통 에러 응답을 반환한다") {
+                resultActions
+                    .andExpect(status().isBadRequest)
+                    .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"))
             }
         }
     }
@@ -304,7 +327,7 @@ class ScheduleControllerTests : BehaviorSpec({
         val invalidRequests = mapOf(
             "공백 title" to """{ "title": "   " }""",
             "빈 문자열 title" to """{ "title": "" }""",
-            "100자 초과 title" to """{ "title": "${"가".repeat(101)}" }""",
+            "50자 초과 title" to """{ "title": "${"가".repeat(51)}" }""",
             "255자 초과 location" to """{ "location": "${"가".repeat(256)}" }""",
             "과거 startAt" to """{ "startAt": "2020-10-10T22:00:00Z" }""",
             "null title" to """{ "title": null }""",
