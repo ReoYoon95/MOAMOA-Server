@@ -330,6 +330,29 @@ class ScheduleControllerTests : BehaviorSpec({
         }
     }
 
+    Given("필수 항목을 null로 보낸 일정 수정 요청이 주어졌을 때") {
+        val requests = mapOf(
+            "title" to """{ "title": null }""",
+            "startAt" to """{ "startAt": null }"""
+        )
+
+        requests.forEach { (field, requestJson) ->
+            When("$field 를 null로 보내면") {
+                val resultActions = mockMvc.perform(
+                    patch("/v1/meetings/1/schedules/20")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestJson)
+                )
+
+                Then("오류 상세의 필드 이름은 요청 필드 이름과 같다") {
+                    resultActions
+                        .andExpect(status().isBadRequest)
+                        .andExpect(jsonPath("$.error.details[0].field").value(field))
+                }
+            }
+        }
+    }
+
     Given("제목·장소가 잘못되었거나 시작 일시가 과거이거나 필수 항목을 null로 보낸 일정 수정 요청이 주어졌을 때") {
         val invalidRequests = mapOf(
             "공백 title" to """{ "title": "   " }""",
