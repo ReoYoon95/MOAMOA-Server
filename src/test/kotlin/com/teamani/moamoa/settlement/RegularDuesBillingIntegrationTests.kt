@@ -171,6 +171,23 @@ class RegularDuesBillingIntegrationTests : BehaviorSpec() {
                 }
             }
         }
+
+        Given("같은 날 청구하는 정기 회비가 여럿이고 일부는 이번 회차, 일부는 지난 회차만 청구되었을 때") {
+            val meetingId = savedMeeting(memberCount = 1)
+            val billedLastMonthId = savedDues(meetingId, CycleType.MONTHLY, "15")
+            val billedThisMonthId = savedDues(meetingId, CycleType.MONTHLY, "15")
+            billingService.bill(billedLastMonthId, kst("2099-10-15T09:00")).shouldNotBeNull()
+            billingService.bill(billedThisMonthId, kst("2099-11-15T09:00")).shouldNotBeNull()
+
+            When("청구 대상을 조회하면") {
+                val dueIds = billingService.findDueRegularDuesIds(kst("2099-11-15T09:30"))
+
+                Then("이번 회차가 청구된 회비만 제외되고 지난 회차만 청구된 회비는 청구 대상이다") {
+                    dueIds shouldContain billedLastMonthId
+                    dueIds shouldNotContain billedThisMonthId
+                }
+            }
+        }
     }
 
     private fun kst(dateTime: String): OffsetDateTime = OffsetDateTime.parse("$dateTime:00+09:00")

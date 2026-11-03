@@ -38,13 +38,18 @@ class RegularDuesBillingService(
     fun findDueRegularDuesIds(now: OffsetDateTime): List<Long> {
         val nowKst = now.withOffsetSameInstant(KST)
         val today = nowKst.toLocalDate()
-        return regularDuesRepository.findAllByIsActiveTrue()
+        val candidates = regularDuesRepository.findAllByIsActiveTrue()
             .filter { isBillingDay(it, today) && !nowKst.toLocalTime().isBefore(it.sendTime) }
-            .mapNotNull { regularDues ->
-                regularDues.id?.takeUnless {
-                    settlementRepository.existsByRegularDuesIdAndBillingPeriod(it, billingPeriod(regularDues, today))
-                }
-            }
+            .mapNotNull { regularDues -> regularDues.id?.let { it to billingPeriod(regularDues, today) } }
+        if (candidates.isEmpty()) {
+            return emptyList()
+        }
+
+        // 이미 청구된 (정기 회비, 회차)를 한 번에 조회한 뒤 메모리에서 제외
+        val billed = settlementRepository
+            .findAllByRegularDuesIdInAndBillingPeriodIn(candidates.map { it.first }, candidates.map { it.second }.toSet())
+            .mapTo(HashSet()) { it.regularDuesId to it.billingPeriod }
+        return candidates.filterNot { it in billed }.map { it.first }
     }
 
     // 회차 정산 1건 생성. 정기 회비마다 따로 호출해 한 건이 실패해도 다른 회비 청구는 유지
