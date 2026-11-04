@@ -103,9 +103,16 @@ class ScheduleService(
         val schedule = scheduleRepository.findByIdAndMeetingId(scheduleId, meetingId)
             ?: throw ApiException(ErrorCode.NOT_FOUND, "일정을 찾을 수 없습니다.")
 
+        // 시작 일시를 실제로 바꿀 때만 과거 여부 검증 (수정 화면 값을 모두 보내도 지난 일정의 다른 항목은 수정 가능)
+        // 오프셋만 다르고 같은 시각일 수 있으므로 isEqual로 비교
+        val newStartsAt = request.startAt?.orElse(null)
+        if (newStartsAt != null && !newStartsAt.isEqual(schedule.startsAt) && newStartsAt.isBefore(OffsetDateTime.now())) {
+            throw ApiException(ErrorCode.VALIDATION_ERROR, "시작 일시는 현재 시각 이후여야 합니다.")
+        }
+
         // 한쪽만 보내도 수정 결과 기준으로 종료 일시가 시작 일시보다 이전이면 안 됨
         validatePeriod(
-            request.startAt?.orElse(null) ?: schedule.startsAt,
+            newStartsAt ?: schedule.startsAt,
             if (request.endAt == null) schedule.endedAt else request.endAt.orElse(null)
         )
 
@@ -114,7 +121,7 @@ class ScheduleService(
         schedule.update(
             request.title?.orElse(null),
             request.description,
-            request.startAt?.orElse(null),
+            newStartsAt,
             request.endAt,
             request.location
         )

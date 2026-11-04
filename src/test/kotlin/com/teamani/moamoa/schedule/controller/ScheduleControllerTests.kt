@@ -353,13 +353,13 @@ class ScheduleControllerTests : BehaviorSpec({
         }
     }
 
-    Given("제목·장소가 잘못되었거나 시작 일시가 과거이거나 필수 항목을 null로 보낸 일정 수정 요청이 주어졌을 때") {
+    // 시작 일시의 과거 여부는 기존 값과 비교해야 하므로 Service에서 검증 (ScheduleServiceTests)
+    Given("제목·장소가 잘못되었거나 필수 항목을 null로 보낸 일정 수정 요청이 주어졌을 때") {
         val invalidRequests = mapOf(
             "공백 title" to """{ "title": "   " }""",
             "빈 문자열 title" to """{ "title": "" }""",
             "50자 초과 title" to """{ "title": "${"가".repeat(51)}" }""",
             "255자 초과 location" to """{ "location": "${"가".repeat(256)}" }""",
-            "과거 startAt" to """{ "startAt": "2020-10-10T22:00:00Z" }""",
             "null title" to """{ "title": null }""",
             "null startAt" to """{ "startAt": null }"""
         )

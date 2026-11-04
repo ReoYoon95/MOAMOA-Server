@@ -60,10 +60,9 @@ data class ScheduleUpdateRequest(
 
     val description: Optional<String>? = null,
 
-    // 보낸 경우에만 검증하므로 지난 일정의 다른 항목 수정은 허용
+    // 과거 여부는 기존 값과 달라졌을 때만 Service에서 검증 (같은 값을 다시 보내는 것은 변경이 아님)
     val startAt: Optional<
         @NotNull(message = "시작 일시는 비울 수 없습니다.")
-        @FutureOrPresent(message = "시작 일시는 현재 시각 이후여야 합니다.")
         OffsetDateTime
     >? = null,
 
