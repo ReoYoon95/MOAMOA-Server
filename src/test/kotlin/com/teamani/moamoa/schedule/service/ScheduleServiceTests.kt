@@ -302,7 +302,7 @@ class ScheduleServiceTests : BehaviorSpec({
             startsAt = OffsetDateTime.parse("2026-10-11T07:00:00+09:00")
         )
 
-        `when`(scheduleRepository.findByIdAndMeetingId(scheduleId, meetingId)).thenReturn(schedule)
+        `when`(scheduleRepository.findByIdAndMeetingIdForUpdate(scheduleId, meetingId)).thenReturn(schedule)
 
         When("deleteSchedule 메서드를 호출하면") {
             val response = scheduleService.deleteSchedule(meetingId, 1L, scheduleId)

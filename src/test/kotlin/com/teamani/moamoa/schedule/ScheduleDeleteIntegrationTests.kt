@@ -20,7 +20,7 @@ import io.kotest.core.spec.style.BehaviorSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
-import org.mockito.ArgumentMatchers.anyLong
+import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.reset
 import org.springframework.beans.factory.annotation.Autowired
@@ -39,7 +39,7 @@ class ScheduleDeleteIntegrationTests : BehaviorSpec() {
     @Autowired
     lateinit var scheduleService: ScheduleService
 
-    @Autowired
+    @MockitoSpyBean
     lateinit var scheduleRepository: ScheduleRepository
 
     @Autowired
@@ -51,7 +51,7 @@ class ScheduleDeleteIntegrationTests : BehaviorSpec() {
     @Autowired
     lateinit var settlementMemberRepository: SettlementMemberRepository
 
-    @MockitoSpyBean
+    @Autowired
     lateinit var settlementRepository: SettlementRepository
 
     init {
@@ -85,6 +85,8 @@ class ScheduleDeleteIntegrationTests : BehaviorSpec() {
                     val payment = settlementMemberRepository.findById(paymentId).orElseThrow()
                     payment.amount shouldBe 10000
                     payment.status shouldBe PaymentStatus.PAID
+                    payment.submittedAt?.toInstant() shouldBe SUBMITTED_AT.toInstant()
+                    payment.confirmedAt?.toInstant() shouldBe CONFIRMED_AT.toInstant()
                 }
 
                 Then("다른 일정의 출석·투표 기록은 남는다") {
@@ -94,21 +96,21 @@ class ScheduleDeleteIntegrationTests : BehaviorSpec() {
             }
         }
 
-        Given("정산 연결 해제 중 오류가 나는 상황에서") {
+        Given("연결 기록을 모두 정리한 뒤 마지막 일정 삭제에서 오류가 나는 상황에서") {
             val meetingId = 9602L
             val scheduleId = savedSchedule(meetingId)
             saveRecords(scheduleId)
             val settlementId = checkNotNull(savedSettlement(meetingId, scheduleId).id)
 
             When("일정을 삭제하면") {
-                doThrow(IllegalStateException("정산 연결 해제 실패")).`when`(settlementRepository).clearScheduleId(anyLong())
+                doThrow(IllegalStateException("일정 삭제 실패")).`when`(scheduleRepository).delete(any(Schedule::class.java))
                 val exception = shouldThrow<IllegalStateException> {
                     scheduleService.deleteSchedule(meetingId, 1L, scheduleId)
                 }
-                reset(settlementRepository)
+                reset(scheduleRepository)
 
-                Then("먼저 삭제한 출석·투표 기록까지 모두 롤백되어 그대로 남는다") {
-                    exception.message shouldBe "정산 연결 해제 실패"
+                Then("먼저 실행한 출석·투표 삭제와 정산 연결 해제까지 모두 롤백되어 그대로 남는다") {
+                    exception.message shouldBe "일정 삭제 실패"
                     scheduleRepository.findById(scheduleId).isPresent shouldBe true
                     attendanceRepository.findAllByScheduleId(scheduleId).size shouldBe 1
                     voteRepository.findAllByScheduleId(scheduleId).size shouldBe 1
@@ -159,7 +161,19 @@ class ScheduleDeleteIntegrationTests : BehaviorSpec() {
     private fun savedPayment(settlementId: Long): Long =
         checkNotNull(
             settlementMemberRepository.save(
-                SettlementMember(settlementId = settlementId, memberId = 3L, amount = 10000, status = PaymentStatus.PAID)
+                SettlementMember(
+                    settlementId = settlementId,
+                    memberId = 3L,
+                    amount = 10000,
+                    status = PaymentStatus.PAID,
+                    submittedAt = SUBMITTED_AT,
+                    confirmedAt = CONFIRMED_AT
+                )
             ).id
         )
+
+    companion object {
+        private val SUBMITTED_AT: OffsetDateTime = OffsetDateTime.parse("2099-10-12T10:00:00+09:00")
+        private val CONFIRMED_AT: OffsetDateTime = OffsetDateTime.parse("2099-10-13T10:00:00+09:00")
+    }
 }
