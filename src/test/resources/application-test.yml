@@ -8,3 +8,6 @@ spring:
 moamoa:
   scheduler:
     enabled: false
+
+jwt:
+  secret: test-only-secret-key-for-moamoa-jwt-0123456789
