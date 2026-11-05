@@ -33,13 +33,13 @@ class RegularDuesBillingService(
     private val noticeService: NoticeService
 ) {
 
-    // 지금 청구할 정기 회비 ID 목록 (청구일이고 발송 시각이 지났으며 이번 회차가 아직 없는 설정)
+    // 지금 청구할 정기 회비 ID 목록 (청구일이고 발송 시각이 지났으며 이번 회차가 아직 없는 설정, 등록 전 발송 시각의 회차 제외)
     @Transactional(readOnly = true)
     fun findDueRegularDuesIds(now: OffsetDateTime): List<Long> {
         val nowKst = now.withOffsetSameInstant(KST)
         val today = nowKst.toLocalDate()
         val candidates = regularDuesRepository.findAllByIsActiveTrue()
-            .filter { isBillingDay(it, today) && !nowKst.toLocalTime().isBefore(it.sendTime) }
+            .filter { isBillingDay(it, today) && !nowKst.toLocalTime().isBefore(it.sendTime) && isRegisteredBySendTime(it, today) }
             .mapNotNull { regularDues -> regularDues.id?.let { it to billingPeriod(regularDues, today) } }
         if (candidates.isEmpty()) {
             return emptyList()
@@ -60,8 +60,10 @@ class RegularDuesBillingService(
         val regularDues = regularDuesRepository.findById(regularDuesId).orElse(null) ?: return null
         val period = billingPeriod(regularDues, billingDate)
 
-        // 조회 후 설정이 비활성화되었거나, 이미 청구했거나, 종료된 모임이면 건너뜀
-        if (!regularDues.isActive || settlementRepository.existsByRegularDuesIdAndBillingPeriod(regularDuesId, period)) {
+        // 조회 후 설정이 비활성화되었거나, 등록 전에 발송 시각이 지난 회차거나, 이미 청구했거나, 종료된 모임이면 건너뜀
+        if (!regularDues.isActive || !isRegisteredBySendTime(regularDues, billingDate) ||
+            settlementRepository.existsByRegularDuesIdAndBillingPeriod(regularDuesId, period)
+        ) {
             return null
         }
         if (!meetingRepository.existsByIdAndEndedAtIsNull(regularDues.meetingId)) {
@@ -74,12 +76,16 @@ class RegularDuesBillingService(
             return null
         }
 
+        // 총액이 정산 금액 저장 범위(Int)를 넘으면 음수로 저장되지 않도록 청구하지 않음
+        val totalAmount = regularDues.amount.toLong() * memberIds.size
+        require(totalAmount <= Int.MAX_VALUE) { "정산 총액이 허용 범위를 초과했습니다. regularDuesId=$regularDuesId" }
+
         val settlement = settlementRepository.save(
             Settlement(
                 meetingId = regularDues.meetingId,
                 regularDuesId = regularDuesId,
                 title = regularDues.title,
-                totalAmount = regularDues.amount * memberIds.size,
+                totalAmount = totalAmount.toInt(),
                 bankName = regularDues.bankName,
                 accountNumber = regularDues.accountNumber,
                 accountHolder = regularDues.accountHolder,
@@ -105,6 +111,12 @@ class RegularDuesBillingService(
         // TODO: 푸시 알림 - 청구 대상 구성원에게 회비 납부 요청 알림 발송
 
         return settlementId
+    }
+
+    // 첫 회차 판단: 등록 시각이 그날 발송 시각 이후면 이번 회차는 건너뛰고 다음 청구일부터 청구 (등록 일시가 없는 기존 설정은 청구)
+    private fun isRegisteredBySendTime(regularDues: RegularDues, billingDate: LocalDate): Boolean {
+        val createdAt = regularDues.createdAt ?: return true
+        return !OffsetDateTime.of(billingDate, regularDues.sendTime, KST).isBefore(createdAt)
     }
 
     private fun regularDuesNotice(regularDues: RegularDues, settlement: Settlement, billingDate: LocalDate) =

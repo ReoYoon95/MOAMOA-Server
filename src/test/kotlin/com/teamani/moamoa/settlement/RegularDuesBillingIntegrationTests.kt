@@ -14,6 +14,7 @@ import com.teamani.moamoa.settlement.repository.RegularDuesRepository
 import com.teamani.moamoa.settlement.repository.SettlementMemberRepository
 import com.teamani.moamoa.settlement.repository.SettlementRepository
 import com.teamani.moamoa.settlement.service.RegularDuesBillingService
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.BehaviorSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.collections.shouldContain
@@ -152,6 +153,61 @@ class RegularDuesBillingIntegrationTests : BehaviorSpec() {
             }
         }
 
+        Given("매월 10일 09:00 정기 회비를 청구일 당일에 등록했을 때") {
+            val meetingId = savedMeeting(memberCount = 1)
+            val afterSendTimeId = savedDues(meetingId, CycleType.MONTHLY, "10", createdAt = kst("2099-11-10T10:00"))
+            val beforeSendTimeId = savedDues(meetingId, CycleType.MONTHLY, "10", createdAt = kst("2099-11-10T08:00"))
+            val noCreatedAtId = savedDues(meetingId, CycleType.MONTHLY, "10", createdAt = null)
+
+            When("그날 발송 시각이 지난 뒤 확인하면") {
+                val now = kst("2099-11-10T10:01")
+                val dueIds = billingService.findDueRegularDuesIds(now)
+
+                Then("발송 시각 이후에 등록한 설정은 이번 회차를 청구하지 않는다") {
+                    dueIds shouldNotContain afterSendTimeId
+                    billingService.bill(afterSendTimeId, now).shouldBeNull()
+                    settlementsOf(afterSendTimeId) shouldBe 0
+                }
+
+                Then("발송 시각 전에 등록한 설정과 등록 일시가 없는 기존 설정은 청구한다") {
+                    dueIds shouldContain beforeSendTimeId
+                    dueIds shouldContain noCreatedAtId
+                }
+            }
+
+            When("다음 달 청구일이 되면") {
+                val now = kst("2099-12-10T09:00")
+
+                Then("발송 시각 이후에 등록한 설정도 청구한다") {
+                    billingService.findDueRegularDuesIds(now) shouldContain afterSendTimeId
+                    billingService.bill(afterSendTimeId, now).shouldNotBeNull()
+                }
+            }
+        }
+
+        Given("정산 총액이 Int 범위 경계인 정기 회비가 있을 때") {
+            val fitMeetingId = savedMeeting(memberCount = 1)
+            val fitDuesId = savedDues(fitMeetingId, CycleType.MONTHLY, "LAST", amount = Int.MAX_VALUE)
+            val overMeetingId = savedMeeting(memberCount = 2)
+            val overDuesId = savedDues(overMeetingId, CycleType.MONTHLY, "LAST", amount = Int.MAX_VALUE / 2 + 1)
+            val now = kst("2099-10-31T09:00")
+
+            When("총액이 Int 최댓값이면") {
+                val settlementId = billingService.bill(fitDuesId, now).shouldNotBeNull()
+
+                Then("정상 청구된다") {
+                    settlementRepository.findById(settlementId).orElseThrow().totalAmount shouldBe Int.MAX_VALUE
+                }
+            }
+
+            When("총액이 Int 최댓값을 넘으면") {
+                Then("음수로 저장하지 않고 청구에 실패한다") {
+                    shouldThrow<IllegalArgumentException> { billingService.bill(overDuesId, now) }
+                    settlementsOf(overDuesId) shouldBe 0
+                }
+            }
+        }
+
         Given("공지 자동 발행을 켠 정기 회비가 있을 때") {
             val meetingId = savedMeeting(memberCount = 2)
             val duesId = savedDues(meetingId, CycleType.MONTHLY, "1", postNotice = true)
@@ -215,7 +271,9 @@ class RegularDuesBillingIntegrationTests : BehaviorSpec() {
         cycleDay: String,
         dueDays: Int = 7,
         isActive: Boolean = true,
-        postNotice: Boolean = false
+        postNotice: Boolean = false,
+        amount: Int = 10000,
+        createdAt: OffsetDateTime? = OffsetDateTime.now()
     ): Long =
         checkNotNull(
             regularDuesRepository.save(
@@ -223,7 +281,7 @@ class RegularDuesBillingIntegrationTests : BehaviorSpec() {
                     meetingId = meetingId,
                     createdBy = 1L,
                     title = "월 회비",
-                    amount = 10000,
+                    amount = amount,
                     cycleType = cycleType,
                     cycleDay = cycleDay,
                     sendTime = LocalTime.of(9, 0),
@@ -232,7 +290,8 @@ class RegularDuesBillingIntegrationTests : BehaviorSpec() {
                     accountNumber = "123456789012",
                     accountHolder = "김모아",
                     isActive = isActive,
-                    postNotice = postNotice
+                    postNotice = postNotice,
+                    createdAt = createdAt
                 )
             ).id
         )
