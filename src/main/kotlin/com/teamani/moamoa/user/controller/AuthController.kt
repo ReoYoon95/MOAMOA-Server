@@ -1,5 +1,6 @@
 package com.teamani.moamoa.user.controller
 
+import com.teamani.moamoa.global.auth.CurrentUserId
 import com.teamani.moamoa.global.response.CommonResponse
 import com.teamani.moamoa.user.dto.LoginRequest
 import com.teamani.moamoa.user.dto.LogoutRequest
@@ -27,9 +28,12 @@ class AuthController(
     fun refresh(@Valid @RequestBody request: TokenRefreshRequest): ResponseEntity<CommonResponse<TokenResponse>> =
         ResponseEntity.ok(CommonResponse(data = authService.refresh(request)))
 
-    // 로그인 사용자 인증은 공통 인증(#66)에서 적용
+    // 액세스 토큰이 없거나 유효하지 않으면 401 (userId는 인증 확인용으로만 받음)
     @PostMapping("/logout")
-    fun logout(@Valid @RequestBody request: LogoutRequest): ResponseEntity<CommonResponse<Nothing?>> {
+    fun logout(
+        @Suppress("UNUSED_PARAMETER") @CurrentUserId currentUserId: Long,
+        @Valid @RequestBody request: LogoutRequest
+    ): ResponseEntity<CommonResponse<Nothing?>> {
         authService.logout(request)
 
         return ResponseEntity.ok(CommonResponse(data = null))

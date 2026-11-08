@@ -1,5 +1,6 @@
 package com.teamani.moamoa.user.controller
 
+import com.teamani.moamoa.global.auth.JwtTokenProvider
 import com.teamani.moamoa.global.exception.ApiException
 import com.teamani.moamoa.global.exception.ErrorCode
 import com.teamani.moamoa.user.dto.LoginRequest
@@ -10,9 +11,11 @@ import com.teamani.moamoa.user.service.AuthService
 import io.kotest.core.spec.style.BehaviorSpec
 import io.kotest.extensions.spring.SpringExtension
 import org.mockito.Mockito.`when`
+import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest
+import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.springframework.test.web.servlet.MockMvc
@@ -30,7 +33,14 @@ class AuthControllerTests : BehaviorSpec() {
     @MockitoBean
     lateinit var authService: AuthService
 
+    @MockitoBean
+    lateinit var jwtTokenProvider: JwtTokenProvider
+
     init {
+        beforeTest {
+            `when`(jwtTokenProvider.getUserId(ACCESS_TOKEN)).thenReturn(USER_ID)
+        }
+
         Given("로그인 요청(POST /v1/auth/login)이 주어졌을 때") {
             val request = LoginRequest(email = "moa@example.com", password = "moamoa1234")
 
@@ -80,6 +90,7 @@ class AuthControllerTests : BehaviorSpec() {
                 When("$case 요청을 보내면") {
                     Then("400 Bad Request와 VALIDATION_ERROR를 반환한다") {
                         mockMvc.post(path) {
+                            header(HttpHeaders.AUTHORIZATION, BEARER_TOKEN)
                             contentType = MediaType.APPLICATION_JSON
                             content = requestJson
                         }.andExpect {
@@ -115,6 +126,7 @@ class AuthControllerTests : BehaviorSpec() {
             When("API를 호출하면") {
                 Then("200 OK와 data=null을 반환한다") {
                     mockMvc.post("/v1/auth/logout") {
+                        header(HttpHeaders.AUTHORIZATION, BEARER_TOKEN)
                         contentType = MediaType.APPLICATION_JSON
                         content = """{ "refreshToken": "refresh" }"""
                     }.andExpect {
@@ -127,6 +139,27 @@ class AuthControllerTests : BehaviorSpec() {
                     verify(authService).logout(LogoutRequest(refreshToken = "refresh"))
                 }
             }
+
+            When("액세스 토큰 없이 호출하면") {
+                Then("401 UNAUTHORIZED이고 리프레시 토큰을 폐기하지 않는다") {
+                    mockMvc.post("/v1/auth/logout") {
+                        contentType = MediaType.APPLICATION_JSON
+                        content = """{ "refreshToken": "refresh" }"""
+                    }.andExpect {
+                        status { isUnauthorized() }
+                        jsonPath("$.error.code") { value("UNAUTHORIZED") }
+                    }
+
+                    verify(authService, never()).logout(LogoutRequest(refreshToken = "refresh"))
+                }
+            }
         }
+    }
+
+    companion object {
+        // 토큰 검증은 mock으로 대체: ACCESS_TOKEN을 보내면 USER_ID로 인증
+        private const val USER_ID = 7L
+        private const val ACCESS_TOKEN = "test-access-token"
+        private const val BEARER_TOKEN = "Bearer $ACCESS_TOKEN"
     }
 }
