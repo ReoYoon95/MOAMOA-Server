@@ -3,6 +3,7 @@ package com.teamani.moamoa.user.controller
 import com.teamani.moamoa.global.response.CommonResponse
 import com.teamani.moamoa.user.dto.LoginRequest
 import com.teamani.moamoa.user.dto.LogoutRequest
+import com.teamani.moamoa.user.dto.LogoutResponse
 import com.teamani.moamoa.user.dto.TokenRefreshRequest
 import com.teamani.moamoa.user.dto.TokenResponse
 import com.teamani.moamoa.user.service.AuthService
@@ -29,9 +30,9 @@ class AuthController(
 
     // 로그인 사용자 인증은 공통 인증(#66)에서 적용
     @PostMapping("/logout")
-    fun logout(@Valid @RequestBody request: LogoutRequest): ResponseEntity<CommonResponse<Nothing?>> {
+    fun logout(@Valid @RequestBody request: LogoutRequest): ResponseEntity<CommonResponse<LogoutResponse>> {
         authService.logout(request)
 
-        return ResponseEntity.ok(CommonResponse(data = null))
+        return ResponseEntity.ok(CommonResponse(data = LogoutResponse()))
     }
 }

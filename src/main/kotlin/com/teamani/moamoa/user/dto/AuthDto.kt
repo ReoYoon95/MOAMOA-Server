@@ -24,3 +24,8 @@ data class TokenResponse(
     val accessToken: String,
     val refreshToken: String
 )
+
+// 성공 응답은 data가 null이 아니어야 하므로 처리 결과만 반환
+data class LogoutResponse(
+    val success: Boolean = true
+)
