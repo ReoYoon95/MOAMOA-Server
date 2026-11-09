@@ -78,10 +78,9 @@ class NoticeService(
         // ADMIN 권한 검증 (Member 도메인 연동 후속 이슈 처리 예정)
         validateAdmin(meetingId, userId)
 
-        // 공지 조회 (존재하지 않거나 다른 모임의 공지면 404)
-        val notice = noticeRepository.findById(noticeId)
-            .filter { it.meetingId == meetingId }
-            .orElseThrow { ApiException(ErrorCode.NOT_FOUND, "공지사항을 찾을 수 없습니다.") }
+        // 공지 잠금 조회 (읽음 처리와 직렬화해 삭제 후 읽음 기록이 남지 않게 함, 없거나 다른 모임 공지면 404)
+        val notice = noticeRepository.findByIdAndMeetingIdForUpdate(noticeId, meetingId)
+            ?: throw ApiException(ErrorCode.NOT_FOUND, "공지사항을 찾을 수 없습니다.")
 
         // 안내 공지가 연결된 정산은 유지하고 연결만 해제, 읽음 기록은 함께 삭제한 뒤 공지 삭제
         settlementRepository.clearNoticeId(noticeId)

@@ -239,7 +239,7 @@ class NoticeReadIntegrationTests : BehaviorSpec() {
         )
     }
 
-    // 공지 작성자는 구성원 ID로 기록 (정산 안내 공지와 같은 기준)
+    // 정산 안내 공지 경로처럼 구성원 ID를 넘겨 작성 (3-1 경로는 #24 전까지 작성자 칸에 사용자 ID가 들어가 작성자 읽음이 집계되지 않음, #24에서 검증)
     private fun createdNotice(group: Group): Long =
         noticeService.createNotice(group.meetingId, group.adminMemberId, NoticeCreateRequest(title = "공지", content = "내용")).noticeId
             .also { noticeIds += it }

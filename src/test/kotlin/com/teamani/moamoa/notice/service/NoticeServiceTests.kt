@@ -89,7 +89,7 @@ class NoticeServiceTests : BehaviorSpec({
             content = "삭제할 공지 내용"
         )
 
-        `when`(noticeRepository.findById(noticeId)).thenReturn(Optional.of(targetNotice))
+        `when`(noticeRepository.findByIdAndMeetingIdForUpdate(noticeId, meetingId)).thenReturn(targetNotice)
 
         When("deleteNotice 메서드를 호출하면") {
             val response = noticeService.deleteNotice(meetingId, noticeId, userId)
