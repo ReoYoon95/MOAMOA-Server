@@ -4,6 +4,7 @@ import com.teamani.moamoa.global.auth.CurrentUserId
 import com.teamani.moamoa.global.response.CommonResponse
 import com.teamani.moamoa.user.dto.LoginRequest
 import com.teamani.moamoa.user.dto.LogoutRequest
+import com.teamani.moamoa.user.dto.LogoutResponse
 import com.teamani.moamoa.user.dto.TokenRefreshRequest
 import com.teamani.moamoa.user.dto.TokenResponse
 import com.teamani.moamoa.user.service.AuthService
@@ -33,9 +34,9 @@ class AuthController(
     fun logout(
         @Suppress("UNUSED_PARAMETER") @CurrentUserId currentUserId: Long,
         @Valid @RequestBody request: LogoutRequest
-    ): ResponseEntity<CommonResponse<Nothing?>> {
+    ): ResponseEntity<CommonResponse<LogoutResponse>> {
         authService.logout(request)
 
-        return ResponseEntity.ok(CommonResponse(data = null))
+        return ResponseEntity.ok(CommonResponse(data = LogoutResponse()))
     }
 }

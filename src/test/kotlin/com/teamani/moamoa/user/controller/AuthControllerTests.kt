@@ -124,7 +124,7 @@ class AuthControllerTests : BehaviorSpec() {
 
         Given("로그아웃 요청(POST /v1/auth/logout)이 주어졌을 때") {
             When("API를 호출하면") {
-                Then("200 OK와 data=null을 반환한다") {
+                Then("200 OK와 data.success=true를 반환한다") {
                     mockMvc.post("/v1/auth/logout") {
                         header(HttpHeaders.AUTHORIZATION, BEARER_TOKEN)
                         contentType = MediaType.APPLICATION_JSON
@@ -132,7 +132,7 @@ class AuthControllerTests : BehaviorSpec() {
                     }.andExpect {
                         status { isOk() }
                         jsonPath("$.success") { value(true) }
-                        jsonPath("$.data") { value(null as Any?) }
+                        jsonPath("$.data.success") { value(true) }
                         jsonPath("$.error") { value(null as Any?) }
                     }
 
