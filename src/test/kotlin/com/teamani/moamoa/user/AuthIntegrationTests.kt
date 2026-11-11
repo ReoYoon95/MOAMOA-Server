@@ -148,6 +148,25 @@ class AuthIntegrationTests : BehaviorSpec() {
             }
         }
 
+        Given("유효한 리프레시 토큰을 가진 사용자가 탈퇴했을 때") {
+            val email = "refresh-withdrawn@example.com"
+            val userId = signUp(email)
+            val login = authService.login(LoginRequest(email, PASSWORD))
+            val user = appUserRepository.findById(userId).orElseThrow()
+            user.deletedAt = OffsetDateTime.now()
+            appUserRepository.save(user)
+            val tokensBefore = refreshTokenRepository.findAllByUserIdOrderByCreatedAtAscIdAsc(userId).map { it.id }
+
+            When("그 토큰으로 재발급하면") {
+                val exception = shouldThrow<ApiException> { authService.refresh(TokenRefreshRequest(login.refreshToken)) }
+
+                Then("UNAUTHORIZED 예외가 발생하고 토큰은 새로 저장되거나 삭제되지 않는다") {
+                    exception.errorCode shouldBe ErrorCode.UNAUTHORIZED
+                    refreshTokenRepository.findAllByUserIdOrderByCreatedAtAscIdAsc(userId).map { it.id } shouldBe tokensBefore
+                }
+            }
+        }
+
         Given("같은 리프레시 토큰으로 재발급 요청이 동시에 들어올 때") {
             val email = "refresh-concurrent@example.com"
             signUp(email)
