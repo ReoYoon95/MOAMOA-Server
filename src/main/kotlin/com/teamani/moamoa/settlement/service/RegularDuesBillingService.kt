@@ -39,7 +39,7 @@ class RegularDuesBillingService(
         val nowKst = now.withOffsetSameInstant(KST)
         val today = nowKst.toLocalDate()
         val candidates = regularDuesRepository.findAllByIsActiveTrue()
-            .filter { isBillingDay(it, today) && !nowKst.toLocalTime().isBefore(it.sendTime) && isRegisteredBySendTime(it, today) }
+            .filter { isDueAt(it, nowKst) }
             .mapNotNull { regularDues -> regularDues.id?.let { it to billingPeriod(regularDues, today) } }
         if (candidates.isEmpty()) {
             return emptyList()
@@ -56,12 +56,15 @@ class RegularDuesBillingService(
     // 동시 실행으로 같은 회차가 먼저 저장되면 unique 제약(regular_dues_id, billing_period) 위반으로 전체 롤백
     @Transactional
     fun bill(regularDuesId: Long, now: OffsetDateTime): Long? {
-        val billingDate = now.withOffsetSameInstant(KST).toLocalDate()
-        val regularDues = regularDuesRepository.findById(regularDuesId).orElse(null) ?: return null
+        val nowKst = now.withOffsetSameInstant(KST)
+        val billingDate = nowKst.toLocalDate()
+        // 수정·삭제와 같은 정기 회비 잠금으로 조회해, 청구 중에 설정이 바뀌거나 삭제되지 않게 함 (먼저 삭제되었으면 null)
+        val regularDues = regularDuesRepository.findByIdForUpdate(regularDuesId) ?: return null
         val period = billingPeriod(regularDues, billingDate)
 
-        // 조회 후 설정이 비활성화되었거나, 등록 전에 발송 시각이 지난 회차거나, 이미 청구했거나, 종료된 모임이면 건너뜀
-        if (!regularDues.isActive || !isRegisteredBySendTime(regularDues, billingDate) ||
+        // 대상 선정 후 설정이 바뀌었을 수 있으므로 현재 설정 기준으로 다시 확인
+        // 비활성화되었거나, 청구일·발송 시각이 아니거나, 등록 전에 발송 시각이 지난 회차거나, 이미 청구했거나, 종료된 모임이면 건너뜀
+        if (!regularDues.isActive || !isDueAt(regularDues, nowKst) ||
             settlementRepository.existsByRegularDuesIdAndBillingPeriod(regularDuesId, period)
         ) {
             return null
@@ -111,6 +114,13 @@ class RegularDuesBillingService(
         // TODO: 푸시 알림 - 청구 대상 구성원에게 회비 납부 요청 알림 발송
 
         return settlementId
+    }
+
+    // 청구일이고 발송 시각이 지났으며 등록 전에 발송 시각이 지난 회차가 아님 (대상 선정과 청구 직전에 같은 기준으로 확인)
+    private fun isDueAt(regularDues: RegularDues, nowKst: OffsetDateTime): Boolean {
+        val today = nowKst.toLocalDate()
+        return isBillingDay(regularDues, today) && !nowKst.toLocalTime().isBefore(regularDues.sendTime) &&
+            isRegisteredBySendTime(regularDues, today)
     }
 
     // 첫 회차 판단: 등록 시각이 그날 발송 시각 이후면 이번 회차는 건너뛰고 다음 청구일부터 청구 (등록 일시가 없는 기존 설정은 청구)

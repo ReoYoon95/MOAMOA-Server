@@ -99,6 +99,32 @@ class RegularDuesBillingIntegrationTests : BehaviorSpec() {
             }
         }
 
+        Given("청구 대상으로 선정된 뒤 관리자가 정기 회비 설정을 바꿨을 때") {
+            val now = kst("2099-11-10T09:00")
+
+            When("반복 지정일을 다른 날로 바꾸면") {
+                val duesId = savedDues(savedMeeting(memberCount = 2), CycleType.MONTHLY, "10")
+                billingService.findDueRegularDuesIds(now) shouldContain duesId
+                regularDuesRepository.save(regularDuesRepository.findById(duesId).orElseThrow().apply { cycleDay = "20" })
+
+                Then("청구 직전에 바뀐 지정일로 다시 확인해 청구하지 않는다") {
+                    billingService.bill(duesId, now).shouldBeNull()
+                    settlementsOf(duesId) shouldBe 0
+                }
+            }
+
+            When("발송 시각을 아직 오지 않은 시각으로 바꾸면") {
+                val duesId = savedDues(savedMeeting(memberCount = 2), CycleType.MONTHLY, "10")
+                billingService.findDueRegularDuesIds(now) shouldContain duesId
+                regularDuesRepository.save(regularDuesRepository.findById(duesId).orElseThrow().apply { sendTime = LocalTime.of(10, 0) })
+
+                Then("청구 직전에 바뀐 발송 시각으로 다시 확인해 청구하지 않는다") {
+                    billingService.bill(duesId, now).shouldBeNull()
+                    settlementsOf(duesId) shouldBe 0
+                }
+            }
+        }
+
         Given("매주 수요일 정기 회비가 이번 주에 이미 청구되었을 때") {
             val meetingId = savedMeeting(memberCount = 2)
             val duesId = savedDues(meetingId, CycleType.WEEKLY, "WED", dueDays = 0)

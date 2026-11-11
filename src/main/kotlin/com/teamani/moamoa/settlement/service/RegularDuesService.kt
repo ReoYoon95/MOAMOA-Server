@@ -78,7 +78,8 @@ class RegularDuesService(
         validateMeeting(meetingId)
         validateAdmin(meetingId, memberId)
 
-        val regularDues = regularDuesRepository.findByIdAndMeetingId(regularDuesId, meetingId)
+        // 자동 청구와 같은 정기 회비 잠금으로 조회해, 청구 중이면 끝난 뒤 수정 (청구는 바뀐 설정으로 다시 확인)
+        val regularDues = regularDuesRepository.findByIdAndMeetingIdForUpdate(regularDuesId, meetingId)
             ?: throw ApiException(ErrorCode.NOT_FOUND, "정기 회비를 찾을 수 없습니다.")
 
         // 모든 항목이 필수라 null로 보내면 비우지 않고 400
@@ -115,7 +116,8 @@ class RegularDuesService(
         validateMeeting(meetingId)
         validateAdmin(meetingId, memberId)
 
-        val regularDues = regularDuesRepository.findByIdAndMeetingId(regularDuesId, meetingId)
+        // 연결 해제 전에 자동 청구와 같은 잠금을 잡아, 청구 중에 만들어진 회차 정산까지 연결을 해제
+        val regularDues = regularDuesRepository.findByIdAndMeetingIdForUpdate(regularDuesId, meetingId)
             ?: throw ApiException(ErrorCode.NOT_FOUND, "정기 회비를 찾을 수 없습니다.")
 
         // 이미 생성된 회차의 정산·납부 내역은 유지하고 연결만 해제한 뒤 삭제

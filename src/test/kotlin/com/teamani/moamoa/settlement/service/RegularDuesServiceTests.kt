@@ -155,7 +155,7 @@ class RegularDuesServiceTests : BehaviorSpec({
 
     Given("일부 필드만 담은 정기 회비 수정 요청이 주어졌을 때") {
         val entity = regularDues()
-        `when`(regularDuesRepository.findByIdAndMeetingId(7L, 1L)).thenReturn(entity)
+        `when`(regularDuesRepository.findByIdAndMeetingIdForUpdate(7L, 1L)).thenReturn(entity)
 
         When("금액과 활성화 여부만 보내면") {
             val response = regularDuesService.updateRegularDues(
@@ -175,7 +175,7 @@ class RegularDuesServiceTests : BehaviorSpec({
     }
 
     Given("반복 주기를 바꾸는 수정 요청이 주어졌을 때") {
-        `when`(regularDuesRepository.findByIdAndMeetingId(7L, 1L)).thenReturn(regularDues())
+        `when`(regularDuesRepository.findByIdAndMeetingIdForUpdate(7L, 1L)).thenReturn(regularDues())
 
         When("반복 주기와 지정일을 함께 보내면") {
             val response = regularDuesService.updateRegularDues(
@@ -204,7 +204,7 @@ class RegularDuesServiceTests : BehaviorSpec({
     }
 
     Given("지정일만 담은 수정 요청이 주어졌을 때") {
-        `when`(regularDuesRepository.findByIdAndMeetingId(7L, 1L)).thenReturn(regularDues())
+        `when`(regularDuesRepository.findByIdAndMeetingIdForUpdate(7L, 1L)).thenReturn(regularDues())
 
         When("기존 반복 주기(MONTHLY)에 맞는 지정일을 보내면") {
             val response = regularDuesService.updateRegularDues(
@@ -233,7 +233,7 @@ class RegularDuesServiceTests : BehaviorSpec({
 
     Given("필수 항목을 null로 보낸 수정 요청이 주어졌을 때") {
         val entity = regularDues()
-        `when`(regularDuesRepository.findByIdAndMeetingId(7L, 1L)).thenReturn(entity)
+        `when`(regularDuesRepository.findByIdAndMeetingIdForUpdate(7L, 1L)).thenReturn(entity)
 
         val clearedRequests = mapOf(
             "title" to RegularDuesUpdateRequest(title = Optional.empty()),
@@ -260,7 +260,7 @@ class RegularDuesServiceTests : BehaviorSpec({
     }
 
     Given("없거나 다른 모임에 속한 정기 회비가 주어졌을 때") {
-        `when`(regularDuesRepository.findByIdAndMeetingId(999L, 1L)).thenReturn(null)
+        `when`(regularDuesRepository.findByIdAndMeetingIdForUpdate(999L, 1L)).thenReturn(null)
 
         When("updateRegularDues 메서드를 호출하면") {
             val exception = shouldThrow<ApiException> {
@@ -286,7 +286,7 @@ class RegularDuesServiceTests : BehaviorSpec({
 
     Given("삭제할 정기 회비가 있을 때") {
         val entity = regularDues()
-        `when`(regularDuesRepository.findByIdAndMeetingId(7L, 1L)).thenReturn(entity)
+        `when`(regularDuesRepository.findByIdAndMeetingIdForUpdate(7L, 1L)).thenReturn(entity)
 
         When("deleteRegularDues 메서드를 호출하면") {
             val response = regularDuesService.deleteRegularDues(1L, 1L, 7L)
