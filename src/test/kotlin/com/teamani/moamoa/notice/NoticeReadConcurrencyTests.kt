@@ -5,6 +5,7 @@ import com.teamani.moamoa.meeting.repository.MeetingRepository
 import com.teamani.moamoa.member.entity.Member
 import com.teamani.moamoa.member.entity.MemberRole
 import com.teamani.moamoa.member.repository.MemberRepository
+import com.teamani.moamoa.member.service.MemberService
 import com.teamani.moamoa.notice.entity.Notice
 import com.teamani.moamoa.notice.repository.NoticeReadRepository
 import com.teamani.moamoa.notice.repository.NoticeRepository
@@ -32,7 +33,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 
-// 실제 트랜잭션·DB에서 같은 공지의 읽음 처리와 공지 삭제가 동시에 들어올 때 공지 단위로 순서대로 처리되는지 검증
+// 실제 트랜잭션·DB에서 공지 읽음 처리와 공지 삭제·모임 나가기가 동시에 들어올 때 순서대로 처리되는지 검증
 @SpringBootTest
 @ActiveProfiles("test")
 class NoticeReadConcurrencyTests : BehaviorSpec() {
@@ -41,6 +42,9 @@ class NoticeReadConcurrencyTests : BehaviorSpec() {
 
     @Autowired
     lateinit var noticeService: NoticeService
+
+    @Autowired
+    lateinit var memberService: MemberService
 
     @Autowired
     lateinit var meetingRepository: MeetingRepository
@@ -94,6 +98,39 @@ class NoticeReadConcurrencyTests : BehaviorSpec() {
                     reset(noticeReadRepository)
                     noticeRepository.findById(saved.noticeId).isPresent shouldBe false
                     noticeReadRepository.findAllByNoticeId(saved.noticeId) shouldBe emptyList()
+                }
+            }
+
+            When("읽음 처리가 구성원과 공지를 잠근 직후 그 구성원의 모임 나가기가 들어오면") {
+                Then("나가기는 읽음 처리가 끝날 때까지 기다린 뒤 처리되고, 나간 구성원의 읽음 기록이 남지 않는다") {
+                    val saved = savedNotice("RACE0302")
+                    val memberId = checkNotNull(memberRepository.findByMeetingIdAndUserId(saved.meetingId, MEMBER_USER_ID)?.id)
+                    // 읽음 처리가 구성원·공지를 잠그고 기존 읽음 기록을 찾기 직전에 멈춤
+                    val pause = Pause()
+                    doAnswer(beforeReal(pause::hold)).`when`(noticeReadRepository).findByNoticeIdAndMemberId(anyLong(), anyLong())
+                    val executor = Executors.newFixedThreadPool(2)
+
+                    try {
+                        val read = executor.start {
+                            noticeService.readNotice(saved.meetingId, saved.noticeId, MEMBER_USER_ID)
+                        }
+                        pause.awaitPaused()
+                        val leave = executor.start {
+                            memberService.leaveMeeting(saved.meetingId, MEMBER_USER_ID)
+                        }
+
+                        shouldThrow<TimeoutException> { leave.get(WAIT_MILLIS, TimeUnit.MILLISECONDS) }
+                        pause.release()
+
+                        read.get(10, TimeUnit.SECONDS).shouldBeNull()
+                        leave.get(10, TimeUnit.SECONDS).shouldBeNull()
+                    } finally {
+                        pause.release()
+                        executor.shutdownNow()
+                    }
+                    reset(noticeReadRepository)
+                    memberRepository.findById(memberId).isPresent shouldBe false
+                    noticeReadRepository.findAll().filter { it.memberId == memberId } shouldBe emptyList()
                 }
             }
         }

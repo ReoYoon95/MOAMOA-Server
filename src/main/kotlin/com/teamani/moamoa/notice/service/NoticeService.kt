@@ -170,7 +170,8 @@ class NoticeService(
     // 내 공지 읽음 처리: 여러 번 호출해도 처음 읽은 시각을 유지
     @Transactional
     fun readNotice(meetingId: Long, noticeId: Long, userId: Long): NoticeReadResponse {
-        val memberId = checkNotNull(memberService.validateMember(meetingId, userId).id) { "구성원 식별자가 없습니다." }
+        // 모임 나가기와 같은 구성원 잠금으로 확인해, 나간 구성원의 읽음 기록이 남지 않게 함 (잠금 순서: 구성원 → 공지)
+        val memberId = checkNotNull(memberService.validateMemberForUpdate(meetingId, userId).id) { "구성원 식별자가 없습니다." }
 
         // 같은 공지를 잠금 조회해 동시에 처음 읽어도 기록이 하나만 남게 함 (unique 제약 위반 방지)
         noticeRepository.findByIdAndMeetingIdForUpdate(noticeId, meetingId)

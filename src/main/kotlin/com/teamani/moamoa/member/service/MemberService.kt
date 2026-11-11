@@ -35,6 +35,16 @@ class MemberService(
             ?: throw ApiException(ErrorCode.FORBIDDEN, "모임 구성원만 요청할 수 있습니다.")
     }
 
+    // validateMember와 같은 검증을 구성원 잠금 조회로 수행 (호출한 트랜잭션이 끝날 때까지 모임 나가기와 순서대로 처리)
+    @Transactional
+    fun validateMemberForUpdate(meetingId: Long, userId: Long): Member {
+        if (!meetingRepository.existsByIdAndEndedAtIsNull(meetingId)) {
+            throw ApiException(ErrorCode.NOT_FOUND, MEETING_NOT_FOUND_MESSAGE)
+        }
+        return memberRepository.findByMeetingIdAndUserIdForUpdate(meetingId, userId)
+            ?: throw ApiException(ErrorCode.FORBIDDEN, "모임 구성원만 요청할 수 있습니다.")
+    }
+
     // 모임 관리자 권한 검증 (모임 없음 404 → 구성원 아님·ADMIN 아님 403), 다른 도메인에서도 재사용
     @Transactional(readOnly = true)
     fun validateAdmin(meetingId: Long, userId: Long): Member {
@@ -61,7 +71,8 @@ class MemberService(
 
     @Transactional
     fun leaveMeeting(meetingId: Long, userId: Long): MemberLeaveResponse {
-        val member = validateMember(meetingId, userId)
+        // 기록을 지우기 전에 구성원을 잠가, 처리 중인 공지 읽음 기록까지 지운 뒤 나가도록 함
+        val member = validateMemberForUpdate(meetingId, userId)
 
         // ADMIN 위임 API 전까지 ADMIN은 모임 삭제로만 모임 종료 가능
         if (member.role == MemberRole.ADMIN) {

@@ -44,6 +44,8 @@ class MemberServiceTests : BehaviorSpec({
         `when`(meetingRepository.existsByIdAndEndedAtIsNull(meetingId)).thenReturn(true)
         `when`(memberRepository.findByMeetingIdAndUserId(meetingId, adminUserId)).thenReturn(admin)
         `when`(memberRepository.findByMeetingIdAndUserId(meetingId, memberUserId)).thenReturn(member)
+        `when`(memberRepository.findByMeetingIdAndUserIdForUpdate(meetingId, adminUserId)).thenReturn(admin)
+        `when`(memberRepository.findByMeetingIdAndUserIdForUpdate(meetingId, memberUserId)).thenReturn(member)
     }
 
     Given("모임 구성원 권한을 검증할 때") {
