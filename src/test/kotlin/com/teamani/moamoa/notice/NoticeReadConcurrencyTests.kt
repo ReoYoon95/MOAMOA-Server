@@ -1,5 +1,7 @@
 package com.teamani.moamoa.notice
 
+import com.teamani.moamoa.global.exception.ApiException
+import com.teamani.moamoa.global.exception.ErrorCode
 import com.teamani.moamoa.meeting.entity.Meeting
 import com.teamani.moamoa.meeting.repository.MeetingRepository
 import com.teamani.moamoa.member.entity.Member
@@ -124,6 +126,39 @@ class NoticeReadConcurrencyTests : BehaviorSpec() {
 
                         read.get(10, TimeUnit.SECONDS).shouldBeNull()
                         leave.get(10, TimeUnit.SECONDS).shouldBeNull()
+                    } finally {
+                        pause.release()
+                        executor.shutdownNow()
+                    }
+                    reset(noticeReadRepository)
+                    memberRepository.findById(memberId).isPresent shouldBe false
+                    noticeReadRepository.findAll().filter { it.memberId == memberId } shouldBe emptyList()
+                }
+            }
+
+            When("모임 나가기가 구성원을 잠근 직후 그 구성원의 읽음 처리가 들어오면") {
+                Then("읽음 처리는 나가기가 끝날 때까지 기다린 뒤 403이고, 나간 구성원의 읽음 기록은 생기지 않는다") {
+                    val saved = savedNotice("RACE0303")
+                    val memberId = checkNotNull(memberRepository.findByMeetingIdAndUserId(saved.meetingId, MEMBER_USER_ID)?.id)
+                    // 나가기가 구성원을 잠그고 읽음 기록을 지우기 직전에 멈춤
+                    val pause = Pause()
+                    doAnswer(beforeReal(pause::hold)).`when`(noticeReadRepository).deleteAllByMemberId(anyLong())
+                    val executor = Executors.newFixedThreadPool(2)
+
+                    try {
+                        val leave = executor.start {
+                            memberService.leaveMeeting(saved.meetingId, MEMBER_USER_ID)
+                        }
+                        pause.awaitPaused()
+                        val read = executor.start {
+                            noticeService.readNotice(saved.meetingId, saved.noticeId, MEMBER_USER_ID)
+                        }
+
+                        shouldThrow<TimeoutException> { read.get(WAIT_MILLIS, TimeUnit.MILLISECONDS) }
+                        pause.release()
+
+                        leave.get(10, TimeUnit.SECONDS).shouldBeNull()
+                        (read.get(10, TimeUnit.SECONDS) as ApiException).errorCode shouldBe ErrorCode.FORBIDDEN
                     } finally {
                         pause.release()
                         executor.shutdownNow()
