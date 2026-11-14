@@ -11,6 +11,7 @@ import com.teamani.moamoa.settlement.entity.SettlementMember
 import com.teamani.moamoa.settlement.repository.RegularDuesRepository
 import com.teamani.moamoa.settlement.repository.SettlementMemberRepository
 import com.teamani.moamoa.settlement.repository.SettlementRepository
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.DayOfWeek
@@ -32,6 +33,8 @@ class RegularDuesBillingService(
     private val meetingRepository: MeetingRepository,
     private val noticeService: NoticeService
 ) {
+
+    private val log = LoggerFactory.getLogger(javaClass)
 
     // 지금 청구할 정기 회비 ID 목록 (청구일이고 발송 시각이 지났으며 이번 회차가 아직 없는 설정, 등록 전 발송 시각의 회차 제외)
     @Transactional(readOnly = true)
@@ -69,7 +72,9 @@ class RegularDuesBillingService(
         ) {
             return null
         }
-        if (!meetingRepository.existsByIdAndEndedAtIsNull(regularDues.meetingId)) {
+        // 모임 종료와 같은 모임 잠금으로 확인해, 확인 직후 종료되어 종료된 모임에 청구되지 않게 함 (잠금 순서: 정기 회비 → 모임)
+        val meeting = meetingRepository.findByIdForUpdate(regularDues.meetingId)
+        if (meeting == null || meeting.endedAt != null) {
             return null
         }
 
@@ -80,8 +85,15 @@ class RegularDuesBillingService(
         }
 
         // 총액이 정산 금액 저장 범위(Int)를 넘으면 음수로 저장되지 않도록 청구하지 않음
+        // 등록·수정 때 막으므로 이후 구성원이 늘어난 경우만 해당. 재시도로 해결되지 않아 예외 대신 경고 로그로 일시적 실패와 구분
         val totalAmount = regularDues.amount.toLong() * memberIds.size
-        require(totalAmount <= Int.MAX_VALUE) { "정산 총액이 허용 범위를 초과했습니다. regularDuesId=$regularDuesId" }
+        if (totalAmount > Int.MAX_VALUE) {
+            log.warn(
+                "정산 총액 초과로 정기 회비 청구 건너뜀 regularDuesId={}, meetingId={}, memberCount={}, amount={}",
+                regularDuesId, regularDues.meetingId, memberIds.size, regularDues.amount
+            )
+            return null
+        }
 
         val settlement = settlementRepository.save(
             Settlement(

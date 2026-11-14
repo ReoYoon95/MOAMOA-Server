@@ -2,6 +2,7 @@ package com.teamani.moamoa.settlement
 
 import com.teamani.moamoa.meeting.entity.Meeting
 import com.teamani.moamoa.meeting.repository.MeetingRepository
+import com.teamani.moamoa.meeting.service.MeetingService
 import com.teamani.moamoa.member.entity.Member
 import com.teamani.moamoa.member.entity.MemberRole
 import com.teamani.moamoa.member.repository.MemberRepository
@@ -66,15 +67,18 @@ class RegularDuesBillingConcurrencyTests : BehaviorSpec() {
     lateinit var meetingRepository: MeetingRepository
 
     @Autowired
-    lateinit var memberRepository: MemberRepository
+    lateinit var meetingService: MeetingService
 
     // 요청을 원하는 시점에 멈춰 경합 순서를 재현하기 위해 spy 사용
     @MockitoSpyBean
     lateinit var settlementRepository: SettlementRepository
 
+    @MockitoSpyBean
+    lateinit var memberRepository: MemberRepository
+
     init {
         afterTest {
-            reset(settlementRepository)
+            reset(settlementRepository, memberRepository)
             settlementMemberRepository.deleteAll()
             settlementRepository.deleteAll()
             regularDuesRepository.deleteAll()
@@ -90,7 +94,7 @@ class RegularDuesBillingConcurrencyTests : BehaviorSpec() {
                     val saved = savedDues()
                     // 청구가 정기 회비를 잠그고 이번 회차 청구 여부를 확인하기 직전에 멈춤
                     val pause = Pause()
-                    doAnswer(beforeReal(pause::hold)).`when`(settlementRepository)
+                    doAnswer(beforeReal(settlementRepository, pause::hold)).`when`(settlementRepository)
                         .existsByRegularDuesIdAndBillingPeriod(anyLong(), anyDate())
                     val executor = Executors.newFixedThreadPool(2)
                     var billedSettlementId: Long? = null
@@ -122,7 +126,7 @@ class RegularDuesBillingConcurrencyTests : BehaviorSpec() {
                 Then("수정은 청구가 끝날 때까지 기다린 뒤 반영되고, 청구는 수정 전 설정으로 한 번만 이루어진다") {
                     val saved = savedDues()
                     val pause = Pause()
-                    doAnswer(beforeReal(pause::hold)).`when`(settlementRepository)
+                    doAnswer(beforeReal(settlementRepository, pause::hold)).`when`(settlementRepository)
                         .existsByRegularDuesIdAndBillingPeriod(anyLong(), anyDate())
                     val request = RegularDuesUpdateRequest(cycleDay = Optional.of("20"))
                     val executor = Executors.newFixedThreadPool(2)
@@ -146,6 +150,70 @@ class RegularDuesBillingConcurrencyTests : BehaviorSpec() {
                     reset(settlementRepository)
                     regularDuesRepository.findById(saved.regularDuesId).orElseThrow().cycleDay shouldBe "20"
                     settlementRepository.findAll().count { it.regularDuesId == saved.regularDuesId } shouldBe 1
+                }
+            }
+        }
+
+        Given("매월 10일 09:00 정기 회비가 청구 대상이고 모임이 진행 중일 때") {
+            val now = OffsetDateTime.parse("2099-11-10T09:00:00+09:00")
+
+            When("자동 청구가 모임을 잠그고 구성원을 조회하는 사이 모임 종료가 들어오면") {
+                Then("모임 종료는 청구가 끝날 때까지 기다린 뒤 처리되고, 청구는 종료 전 모임 기준으로 한 번 이루어진다") {
+                    val saved = savedDues()
+                    // 청구가 모임 잠금을 얻고 구성원을 조회하기 직전에 멈춤
+                    val pause = Pause()
+                    doAnswer(beforeReal(memberRepository, pause::hold)).`when`(memberRepository)
+                        .findAllByMeetingIdOrderByIdAsc(anyLong())
+                    val executor = Executors.newFixedThreadPool(2)
+
+                    try {
+                        val bill = executor.submit(Callable { billingService.bill(saved.regularDuesId, now) })
+                        pause.awaitPaused()
+                        val end = executor.start { meetingService.deleteMeeting(saved.meetingId, ADMIN_USER_ID) }
+
+                        shouldThrow<TimeoutException> { end.get(WAIT_MILLIS, TimeUnit.MILLISECONDS) }
+                        pause.release()
+
+                        bill.get(10, TimeUnit.SECONDS).shouldNotBeNull()
+                        end.get(10, TimeUnit.SECONDS).shouldBeNull()
+                    } finally {
+                        pause.release()
+                        executor.shutdownNow()
+                    }
+                    reset(memberRepository)
+                    meetingRepository.findById(saved.meetingId).orElseThrow().endedAt.shouldNotBeNull()
+                    settlementRepository.findAll().count { it.regularDuesId == saved.regularDuesId } shouldBe 1
+                }
+            }
+
+            When("같은 정기 회비의 같은 회차를 두 요청이 동시에 청구하면") {
+                Then("한 요청만 정산을 만들고, 정산과 납부 항목은 한 번만 생성된다") {
+                    val saved = savedDues()
+                    val ready = CountDownLatch(2)
+                    val start = CountDownLatch(1)
+                    val executor = Executors.newFixedThreadPool(2)
+
+                    val results = try {
+                        List(2) {
+                            executor.submit(
+                                Callable {
+                                    ready.countDown()
+                                    start.await()
+                                    billingService.bill(saved.regularDuesId, now)
+                                }
+                            )
+                        }.also {
+                            ready.await()
+                            start.countDown()
+                        }.map { it.get(10, TimeUnit.SECONDS) }
+                    } finally {
+                        executor.shutdownNow()
+                    }
+
+                    results.count { it != null } shouldBe 1
+                    val settlements = settlementRepository.findAll().filter { it.regularDuesId == saved.regularDuesId }
+                    settlements.size shouldBe 1
+                    settlementMemberRepository.findAll().count { it.settlementId == settlements.single().id } shouldBe 2
                 }
             }
         }
@@ -183,9 +251,9 @@ class RegularDuesBillingConcurrencyTests : BehaviorSpec() {
     private fun anyDate(): LocalDate = any(LocalDate::class.java) ?: LocalDate.MIN
 
     // 끼워 넣은 동작 실행 후 실제 Repository 메서드 호출 (Spring Data 프록시 spy의 기본 응답이 실제 Repository 위임)
-    private fun beforeReal(action: () -> Unit) = Answer { invocation ->
+    private fun beforeReal(spy: Any, action: () -> Unit) = Answer { invocation ->
         action()
-        mockingDetails(settlementRepository).mockCreationSettings.defaultAnswer.answer(invocation)
+        mockingDetails(spy).mockCreationSettings.defaultAnswer.answer(invocation)
     }
 
     // 첫 호출만 멈추고, 테스트가 해제할 때까지 대기 (정기 회비 잠금을 쥔 채 멈추므로 H2 잠금 대기 2초 안에 해제)
@@ -214,6 +282,9 @@ class RegularDuesBillingConcurrencyTests : BehaviorSpec() {
 
     companion object {
         private const val ADMIN_MEMBER_ID = 1L
+
+        // savedDues()의 ADMIN 구성원 사용자 ID (모임 종료 권한 확인용)
+        private const val ADMIN_USER_ID = 100L
 
         // 다른 요청을 기다리는 시간 (H2 잠금 대기 2초보다 짧게)
         private const val WAIT_MILLIS = 500L

@@ -14,7 +14,6 @@ import com.teamani.moamoa.settlement.repository.RegularDuesRepository
 import com.teamani.moamoa.settlement.repository.SettlementMemberRepository
 import com.teamani.moamoa.settlement.repository.SettlementRepository
 import com.teamani.moamoa.settlement.service.RegularDuesBillingService
-import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.BehaviorSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.collections.shouldContain
@@ -226,9 +225,9 @@ class RegularDuesBillingIntegrationTests : BehaviorSpec() {
                 }
             }
 
-            When("총액이 Int 최댓값을 넘으면") {
-                Then("음수로 저장하지 않고 청구에 실패한다") {
-                    shouldThrow<IllegalArgumentException> { billingService.bill(overDuesId, now) }
+            When("총액이 Int 최댓값을 넘으면 (등록 후 구성원이 늘어난 경우)") {
+                Then("예외 없이 이번 회차를 건너뛰고 정산을 만들지 않는다") {
+                    billingService.bill(overDuesId, now).shouldBeNull()
                     settlementsOf(overDuesId) shouldBe 0
                 }
             }
