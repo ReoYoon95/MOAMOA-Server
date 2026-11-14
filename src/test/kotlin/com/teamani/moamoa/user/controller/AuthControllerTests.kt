@@ -10,6 +10,8 @@ import com.teamani.moamoa.user.dto.TokenResponse
 import com.teamani.moamoa.user.service.AuthService
 import io.kotest.core.spec.style.BehaviorSpec
 import io.kotest.extensions.spring.SpringExtension
+import org.mockito.ArgumentMatchers.any
+import org.mockito.ArgumentMatchers.anyLong
 import org.mockito.Mockito.`when`
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
@@ -136,7 +138,7 @@ class AuthControllerTests : BehaviorSpec() {
                         jsonPath("$.error") { value(null as Any?) }
                     }
 
-                    verify(authService).logout(LogoutRequest(refreshToken = "refresh"))
+                    verify(authService).logout(USER_ID, LogoutRequest(refreshToken = "refresh"))
                 }
             }
 
@@ -150,7 +152,7 @@ class AuthControllerTests : BehaviorSpec() {
                         jsonPath("$.error.code") { value("UNAUTHORIZED") }
                     }
 
-                    verify(authService, never()).logout(LogoutRequest(refreshToken = "refresh"))
+                    verify(authService, never()).logout(anyLong(), any(LogoutRequest::class.java) ?: LogoutRequest(refreshToken = "refresh"))
                 }
             }
         }

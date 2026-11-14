@@ -29,13 +29,13 @@ class AuthController(
     fun refresh(@Valid @RequestBody request: TokenRefreshRequest): ResponseEntity<CommonResponse<TokenResponse>> =
         ResponseEntity.ok(CommonResponse(data = authService.refresh(request)))
 
-    // 액세스 토큰이 없거나 유효하지 않으면 401 (userId는 인증 확인용으로만 받음)
+    // 액세스 토큰이 없거나 유효하지 않으면 401, 요청한 사용자의 리프레시 토큰만 폐기
     @PostMapping("/logout")
     fun logout(
-        @Suppress("UNUSED_PARAMETER") @CurrentUserId currentUserId: Long,
+        @CurrentUserId currentUserId: Long,
         @Valid @RequestBody request: LogoutRequest
     ): ResponseEntity<CommonResponse<LogoutResponse>> {
-        authService.logout(request)
+        authService.logout(currentUserId, request)
 
         return ResponseEntity.ok(CommonResponse(data = LogoutResponse()))
     }
