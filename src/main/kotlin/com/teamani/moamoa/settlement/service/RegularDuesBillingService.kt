@@ -115,7 +115,7 @@ class RegularDuesBillingService(
 
         // 공지 작성자는 정기 회비를 등록한 관리자
         if (regularDues.postNotice) {
-            val notice = noticeService.createNotice(
+            val notice = noticeService.createNoticeByMember(
                 regularDues.meetingId,
                 regularDues.createdBy,
                 regularDuesNotice(regularDues, settlement, billingDate)

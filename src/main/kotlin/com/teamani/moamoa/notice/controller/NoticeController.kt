@@ -1,5 +1,6 @@
 package com.teamani.moamoa.notice.controller
 
+import com.teamani.moamoa.global.auth.CurrentUserId
 import com.teamani.moamoa.global.response.CommonResponse
 import com.teamani.moamoa.notice.dto.NoticeCreateRequest
 import com.teamani.moamoa.notice.dto.NoticeCreateResponse
@@ -35,12 +36,10 @@ class NoticeController(
 
     @PostMapping
     fun createNotice(
+        @CurrentUserId currentUserId: Long,
         @PathVariable meetingId: Long,
         @Valid @RequestBody request: NoticeCreateRequest
     ): ResponseEntity<CommonResponse<NoticeCreateResponse>> {
-        // 인증 구현 전 임시 관리자 ID (데모용 1L)
-        val currentUserId = 1L
-
         val response: NoticeCreateResponse = noticeService.createNotice(meetingId, currentUserId, request)
 
         return ResponseEntity.status(HttpStatus.CREATED).body(CommonResponse(data = response))
@@ -48,11 +47,10 @@ class NoticeController(
 
     @DeleteMapping("/{noticeId}")
     fun deleteNotice(
+        @CurrentUserId currentUserId: Long,
         @PathVariable meetingId: Long,
         @PathVariable noticeId: Long
     ): ResponseEntity<CommonResponse<NoticeDeleteResponse>> {
-        val currentUserId = 1L // TODO: 인증 구현 시 실제 사용자 ID로 교체
-
         val response: NoticeDeleteResponse = noticeService.deleteNotice(meetingId, noticeId, currentUserId)
 
         return ResponseEntity.ok(CommonResponse(data = response))
@@ -60,10 +58,10 @@ class NoticeController(
 
     @GetMapping("/{noticeId}")
     fun getNoticeDetail(
+        @CurrentUserId currentUserId: Long,
         @PathVariable meetingId: Long,
         @PathVariable noticeId: Long
     ): ResponseEntity<CommonResponse<NoticeDetailResponse>> {
-        val currentUserId = 1L
         val response: NoticeDetailResponse = noticeService.getNoticeDetail(meetingId, noticeId, currentUserId)
 
         return ResponseEntity.ok(CommonResponse(data = response))
@@ -71,11 +69,11 @@ class NoticeController(
 
     @GetMapping
     fun getNotices(
+        @CurrentUserId currentUserId: Long,
         @PathVariable meetingId: Long,
         @RequestParam(defaultValue = "0") @Min(0) page: Int,
         @RequestParam(defaultValue = "20") @Min(1) @Max(100) size: Int
     ): ResponseEntity<CommonResponse<NoticeListResponse>> {
-        val currentUserId = 1L
         val response: NoticeListResponse = noticeService.getNotices(meetingId, page, size, currentUserId)
 
         return ResponseEntity.ok(CommonResponse(data = response))
@@ -83,11 +81,11 @@ class NoticeController(
 
     @PatchMapping("/{noticeId}")
     fun updateNotice(
+        @CurrentUserId currentUserId: Long,
         @PathVariable meetingId: Long,
         @PathVariable noticeId: Long,
         @Valid @RequestBody request: NoticeUpdateRequest
     ): ResponseEntity<CommonResponse<NoticeUpdateResponse>> {
-        val currentUserId = 1L // TODO: 인증 구현 시 실제 사용자 ID로 교체
         val response: NoticeUpdateResponse = noticeService.updateNotice(meetingId, noticeId, currentUserId, request)
 
         return ResponseEntity.ok(CommonResponse(data = response))
@@ -95,10 +93,10 @@ class NoticeController(
 
     @PutMapping("/{noticeId}/reads/me")
     fun readNotice(
+        @CurrentUserId currentUserId: Long,
         @PathVariable meetingId: Long,
         @PathVariable noticeId: Long
     ): ResponseEntity<CommonResponse<NoticeReadResponse>> {
-        val currentUserId = 1L // TODO: 인증 구현 시 실제 사용자 ID로 교체 (#66)
         val response: NoticeReadResponse = noticeService.readNotice(meetingId, noticeId, currentUserId)
 
         return ResponseEntity.ok(CommonResponse(data = response))
@@ -106,10 +104,10 @@ class NoticeController(
 
     @GetMapping("/{noticeId}/reads")
     fun getNoticeReads(
+        @CurrentUserId currentUserId: Long,
         @PathVariable meetingId: Long,
         @PathVariable noticeId: Long
     ): ResponseEntity<CommonResponse<NoticeReadStatusResponse>> {
-        val currentUserId = 1L // TODO: 인증 구현 시 실제 사용자 ID로 교체 (#66)
         val response: NoticeReadStatusResponse = noticeService.getNoticeReads(meetingId, noticeId, currentUserId)
 
         return ResponseEntity.ok(CommonResponse(data = response))

@@ -9,6 +9,7 @@ import com.teamani.moamoa.member.entity.MemberRole
 import com.teamani.moamoa.member.repository.MemberRepository
 import com.teamani.moamoa.member.service.MemberService
 import com.teamani.moamoa.notice.dto.NoticeCreateRequest
+import com.teamani.moamoa.notice.dto.NoticeUpdateRequest
 import com.teamani.moamoa.notice.repository.NoticeReadRepository
 import com.teamani.moamoa.notice.repository.NoticeRepository
 import com.teamani.moamoa.notice.service.NoticeService
@@ -28,12 +29,13 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.ActiveProfiles
 import java.time.Duration
 import java.time.OffsetDateTime
+import java.util.Optional
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-// 실제 트랜잭션·DB에서 공지 읽음 기록의 저장, 집계, 삭제와 동시 읽음 처리를 검증
+// 실제 트랜잭션·DB에서 공지 읽음 기록의 저장, 집계, 삭제와 동시 읽음 처리, 작성자 표시와 권한 검증을 확인
 @SpringBootTest
 @ActiveProfiles("test")
 class NoticeReadIntegrationTests : BehaviorSpec() {
@@ -80,7 +82,7 @@ class NoticeReadIntegrationTests : BehaviorSpec() {
             appUserRepository.deleteAllById(userIds)
         }
 
-        Given("관리자 1명과 구성원 2명이 있는 모임에서 관리자가 공지를 작성했을 때") {
+        Given("관리자 1명과 구성원 2명이 있는 모임에서 관리자가 공지 작성 API(3-1)로 공지를 작성했을 때") {
             val group = savedGroup()
             val noticeId = createdNotice(group)
 
@@ -114,9 +116,22 @@ class NoticeReadIntegrationTests : BehaviorSpec() {
             When("공지 목록을 조회하면") {
                 val response = noticeService.getNotices(group.meetingId, 0, 20, group.memberUserId)
 
-                Then("읽은 현재 구성원 수와 전체 구성원 수가 함께 반환된다") {
+                Then("읽은 현재 구성원 수와 전체 구성원 수, 작성자 정보가 함께 반환된다") {
                     response.notices.single().readCount shouldBe 2
                     response.notices.single().totalCount shouldBe 3
+                    response.notices.single().author.memberId shouldBe group.adminMemberId
+                    response.notices.single().author.userName shouldBe "관리자"
+                    response.notices.single().author.profileColor shouldBe ProfileColor.LIGHT_BLUE
+                }
+            }
+
+            When("공지 상세를 조회하면") {
+                val response = noticeService.getNoticeDetail(group.meetingId, noticeId, group.memberUserId)
+
+                Then("작성자는 사용자 ID가 아닌 관리자의 구성원 ID와 사용자 정보로 반환된다") {
+                    response.author.memberId shouldBe group.adminMemberId
+                    response.author.userName shouldBe "관리자"
+                    response.author.profileColor shouldBe ProfileColor.LIGHT_BLUE
                 }
             }
 
@@ -133,6 +148,83 @@ class NoticeReadIntegrationTests : BehaviorSpec() {
                     response.readCount shouldBe 1
                     response.totalCount shouldBe 3
                     response.unreadMembers.map { it.memberId } shouldContainExactly listOf(group.otherMemberId, newMemberId)
+                }
+            }
+        }
+
+        Given("작성자가 모임을 나간 공지가 있을 때") {
+            val group = savedGroup()
+            // 정산·정기 회비 안내 공지처럼 작성자 구성원 ID를 정해 작성한 뒤 작성자가 모임을 나감
+            val noticeId = noticeService.createNoticeByMember(
+                group.meetingId,
+                group.memberId,
+                NoticeCreateRequest(title = "공지", content = "내용")
+            ).noticeId.also { noticeIds += it }
+            memberService.leaveMeeting(group.meetingId, group.memberUserId)
+
+            When("공지 목록과 상세를 조회하면") {
+                val listAuthor = noticeService.getNotices(group.meetingId, 0, 20, group.adminUserId).notices.single().author
+                val detailAuthor = noticeService.getNoticeDetail(group.meetingId, noticeId, group.adminUserId).author
+
+                Then("작성자 구성원 ID는 유지되고 이름은 \"탈퇴한 사용자\", 프로필 색은 기본값 LIGHT_BLUE다") {
+                    listOf(listAuthor, detailAuthor).forEach { author ->
+                        author.memberId shouldBe group.memberId
+                        author.userName shouldBe "탈퇴한 사용자"
+                        author.profileColor shouldBe ProfileColor.LIGHT_BLUE
+                    }
+                }
+            }
+        }
+
+        Given("관리자가 아닌 구성원, 모임 밖 사용자, 종료된 모임의 공지 요청이 주어졌을 때") {
+            val group = savedGroup()
+            val noticeId = createdNotice(group)
+            val outsiderUserId = savedUser("외부인", ProfileColor.LIGHT_BLUE)
+            val noticeCountBefore = noticeRepository.count()
+
+            When("일반 구성원이 공지를 작성·수정·삭제하면") {
+                val errors = listOf(
+                    shouldThrow<ApiException> {
+                        noticeService.createNotice(group.meetingId, group.memberUserId, NoticeCreateRequest(title = "새 공지", content = "내용"))
+                    },
+                    shouldThrow<ApiException> {
+                        noticeService.updateNotice(group.meetingId, noticeId, group.memberUserId, NoticeUpdateRequest(title = Optional.of("수정")))
+                    },
+                    shouldThrow<ApiException> { noticeService.deleteNotice(group.meetingId, noticeId, group.memberUserId) }
+                )
+
+                Then("모두 403 FORBIDDEN이고 공지는 추가·수정·삭제되지 않는다") {
+                    errors.map { it.errorCode } shouldContainExactly List(3) { ErrorCode.FORBIDDEN }
+                    noticeRepository.count() shouldBe noticeCountBefore
+                    noticeRepository.findById(noticeId).orElseThrow().title shouldBe "공지"
+                }
+            }
+
+            When("모임 밖 사용자가 공지 목록·상세·읽음 현황을 조회하면") {
+                val errors = listOf(
+                    shouldThrow<ApiException> { noticeService.getNotices(group.meetingId, 0, 20, outsiderUserId) },
+                    shouldThrow<ApiException> { noticeService.getNoticeDetail(group.meetingId, noticeId, outsiderUserId) },
+                    shouldThrow<ApiException> { noticeService.getNoticeReads(group.meetingId, noticeId, outsiderUserId) }
+                )
+
+                Then("모두 403 FORBIDDEN이다") {
+                    errors.map { it.errorCode } shouldContainExactly List(3) { ErrorCode.FORBIDDEN }
+                }
+            }
+
+            When("모임이 종료된 뒤 관리자가 공지를 조회·작성하면") {
+                meetingRepository.findById(group.meetingId).orElseThrow().also { it.end() }.let { meetingRepository.save(it) }
+                val errors = listOf(
+                    shouldThrow<ApiException> { noticeService.getNotices(group.meetingId, 0, 20, group.adminUserId) },
+                    shouldThrow<ApiException> { noticeService.getNoticeDetail(group.meetingId, noticeId, group.adminUserId) },
+                    shouldThrow<ApiException> {
+                        noticeService.createNotice(group.meetingId, group.adminUserId, NoticeCreateRequest(title = "새 공지", content = "내용"))
+                    }
+                )
+
+                Then("모두 404 NOT_FOUND이고 공지는 추가되지 않는다") {
+                    errors.map { it.errorCode } shouldContainExactly List(3) { ErrorCode.NOT_FOUND }
+                    noticeRepository.count() shouldBe noticeCountBefore
                 }
             }
         }
@@ -239,9 +331,9 @@ class NoticeReadIntegrationTests : BehaviorSpec() {
         )
     }
 
-    // 정산 안내 공지 경로처럼 구성원 ID를 넘겨 작성 (3-1 경로는 #24 전까지 작성자 칸에 사용자 ID가 들어가 작성자 읽음이 집계되지 않음, #24에서 검증)
+    // 관리자가 공지 작성 API(3-1) 경로로 작성
     private fun createdNotice(group: Group): Long =
-        noticeService.createNotice(group.meetingId, group.adminMemberId, NoticeCreateRequest(title = "공지", content = "내용")).noticeId
+        noticeService.createNotice(group.meetingId, group.adminUserId, NoticeCreateRequest(title = "공지", content = "내용")).noticeId
             .also { noticeIds += it }
 
     private fun savedUser(name: String, profileColor: ProfileColor): Long {
