@@ -29,13 +29,17 @@ import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.anyList
 import org.mockito.ArgumentMatchers.anyLong
+import org.mockito.ArgumentMatchers.anyString
+import org.mockito.ArgumentMatchers.eq
 import org.mockito.Mockito.`when`
 import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.doAnswer
+import org.mockito.Mockito.inOrder
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
+import java.time.LocalDate
 import java.time.OffsetDateTime
 
 class SettlementServiceTests : BehaviorSpec({
@@ -81,6 +85,9 @@ class SettlementServiceTests : BehaviorSpec({
     `when`(scheduleRepository.findByIdAndMeetingId(20L, 1L)).thenReturn(
         Schedule(id = 20L, meetingId = 1L, title = "10월 정기 모임", startsAt = OffsetDateTime.parse("2026-10-11T10:00:00Z"))
     )
+
+    // 기본: 연결 공지 없음 (Mockito는 Long?을 null이 아닌 0으로 흉내 내므로 명시)
+    `when`(settlementRepository.findNoticeIdByIdAndMeetingId(anyLong(), anyLong())).thenReturn(null)
 
     afterEach { clearInvocations(settlementRepository, settlementMemberRepository, noticeService, memberService) }
 
@@ -718,6 +725,295 @@ class SettlementServiceTests : BehaviorSpec({
                     exception.errorCode shouldBe ErrorCode.NOT_FOUND
                     verifyNoInteractions(settlementRepository, settlementMemberRepository)
                 }
+            }
+        }
+    }
+
+    // ===== 정산 취소·환불 (#89) =====
+    fun anyNotice() = any(NoticeCreateRequest::class.java) ?: NoticeCreateRequest("t", "c")
+    fun payment(id: Long, memberId: Long, status: PaymentStatus, settlementId: Long = 50L) =
+        SettlementMember(id = id, settlementId = settlementId, memberId = memberId, amount = 5000, status = status)
+    fun cancelable(id: Long = 50L, noticeId: Long? = 12L, billingPeriod: LocalDate? = null, title: String = "10월 정기 모임 식비") = Settlement(
+        id = id,
+        meetingId = 1L,
+        createdBy = 1L,
+        noticeId = noticeId,
+        title = title,
+        totalAmount = 10000,
+        bankName = "국민은행",
+        accountNumber = "123456789012",
+        accountHolder = "김모아",
+        dueAt = OffsetDateTime.parse("2026-10-20T14:59:00Z"),
+        billingPeriod = billingPeriod
+    )
+    fun canceled(id: Long = 50L) = cancelable(id).apply { cancel("금액 입력 오류", OffsetDateTime.parse("2026-10-15T01:00:00Z")) }
+
+    Given("연결된 안내 공지가 있고 완납한 구성원이 있는 정산을 취소할 때") {
+        val settlement = cancelable()
+        `when`(settlementRepository.findNoticeIdByIdAndMeetingId(50L, 1L)).thenReturn(12L)
+        `when`(settlementRepository.findByIdAndMeetingIdForUpdate(50L, 1L)).thenReturn(settlement)
+        `when`(settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(50L))
+            .thenReturn(listOf(payment(91L, 1L, PaymentStatus.PAID), payment(92L, 5L, PaymentStatus.UNPAID)))
+        `when`(noticeService.createNoticeByMember(anyLong(), anyLong(), anyNotice()))
+            .thenReturn(NoticeCreateResponse(noticeId = 16L, title = "[정산 취소] 10월 정기 모임 식비"))
+
+        When("사유와 함께 cancelSettlement를 호출하면") {
+            val response = settlementService.cancelSettlement(1L, 1L, 50L, "금액 입력 오류")
+
+            Then("정산은 취소됨으로 남고 사유·일시가 저장되며, 기존 공지에 취소 표시 후 새 취소 공지로 교체된다") {
+                response.status shouldBe SettlementStatus.CANCELED
+                response.cancelReason shouldBe "금액 입력 오류"
+                response.noticeId shouldBe 16L
+                settlement.status shouldBe SettlementStatus.CANCELED
+                settlement.canceledAt.shouldNotBeNull()
+                settlement.noticeId shouldBe 16L
+                verify(noticeService).markCanceled(1L, 12L, "⚠ 이 정산은 취소되었습니다. (사유: 금액 입력 오류)")
+                // 공지 삭제와 같은 순서(공지 → 정산)로 잠금
+                val order = inOrder(noticeService, settlementRepository)
+                order.verify(noticeService).lockNotice(1L, 12L)
+                order.verify(settlementRepository).findByIdAndMeetingIdForUpdate(50L, 1L)
+                verify(noticeService).createNoticeByMember(
+                    1L,
+                    1L,
+                    NoticeCreateRequest(
+                        title = "[정산 취소] 10월 정기 모임 식비",
+                        content = "정산명: 10월 정기 모임 식비\n이 정산은 취소되었습니다.\n사유: 금액 입력 오류\n이미 납부한 금액은 관리자가 따로 돌려드립니다."
+                    )
+                )
+            }
+        }
+    }
+
+    Given("완납한 구성원이 없는 정기 회비 회차 정산을 사유 없이 취소할 때") {
+        val settlement = cancelable(id = 51L, billingPeriod = LocalDate.parse("2026-10-01"), title = "월 회비 (10월)")
+        `when`(settlementRepository.findByIdAndMeetingIdForUpdate(51L, 1L)).thenReturn(settlement)
+        `when`(settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(51L)).thenReturn(listOf(payment(93L, 5L, PaymentStatus.UNPAID, 51L)))
+        `when`(noticeService.createNoticeByMember(anyLong(), anyLong(), anyNotice()))
+            .thenReturn(NoticeCreateResponse(noticeId = 17L, title = "[회비 취소] 월 회비 (10월)"))
+
+        When("cancelSettlement를 호출하면") {
+            settlementService.cancelSettlement(1L, 1L, 51L, null)
+
+            Then("[회비 취소] 제목으로, 사유와 환불 안내 없이 공지를 처리한다") {
+                verify(noticeService).markCanceled(1L, 12L, "⚠ 이 정산은 취소되었습니다.")
+                verify(noticeService).createNoticeByMember(
+                    1L,
+                    1L,
+                    NoticeCreateRequest(title = "[회비 취소] 월 회비 (10월)", content = "정산명: 월 회비 (10월)\n이 정산은 취소되었습니다.")
+                )
+            }
+        }
+    }
+
+    Given("정산명이 길어 취소 공지 제목이 50자를 넘을 때") {
+        val longTitle = "가".repeat(50)
+        val settlement = cancelable(id = 52L, title = longTitle)
+        `when`(settlementRepository.findByIdAndMeetingIdForUpdate(52L, 1L)).thenReturn(settlement)
+        `when`(settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(52L)).thenReturn(emptyList())
+        `when`(noticeService.createNoticeByMember(anyLong(), anyLong(), anyNotice()))
+            .thenReturn(NoticeCreateResponse(noticeId = 18L, title = "t"))
+
+        When("cancelSettlement를 호출하면") {
+            settlementService.cancelSettlement(1L, 1L, 52L, null)
+
+            Then("새 공지 제목은 앞 50자까지만 쓴다") {
+                val captor = ArgumentCaptor.forClass(NoticeCreateRequest::class.java)
+                verify(noticeService).createNoticeByMember(anyLong(), anyLong(), captor.capture() ?: NoticeCreateRequest("t", "c"))
+                captor.value.title shouldBe ("[정산 취소] $longTitle").take(50)
+            }
+        }
+    }
+
+    Given("연결된 공지가 없는 정산을 취소할 때") {
+        val settlement = cancelable(id = 53L, noticeId = null)
+        `when`(settlementRepository.findByIdAndMeetingIdForUpdate(53L, 1L)).thenReturn(settlement)
+        `when`(settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(53L)).thenReturn(emptyList())
+
+        When("cancelSettlement를 호출하면") {
+            val response = settlementService.cancelSettlement(1L, 1L, 53L, "중복 생성")
+
+            Then("취소만 하고 공지는 만들지 않는다") {
+                response.status shouldBe SettlementStatus.CANCELED
+                response.noticeId.shouldBeNull()
+                verifyNoInteractions(noticeService)
+            }
+        }
+    }
+
+    Given("취소할 수 없는 정산일 때") {
+        When("이미 취소된 정산이면") {
+            `when`(settlementRepository.findByIdAndMeetingIdForUpdate(54L, 1L)).thenReturn(canceled(54L))
+            val exception = shouldThrow<ApiException> { settlementService.cancelSettlement(1L, 1L, 54L, null) }
+
+            Then("422 UNPROCESSABLE_ENTITY이고 공지를 처리하지 않는다") {
+                exception.errorCode shouldBe ErrorCode.UNPROCESSABLE_ENTITY
+                verifyNoInteractions(noticeService)
+            }
+        }
+
+        When("확인 대기(PENDING)인 구성원이 있으면") {
+            val settlement = cancelable(id = 55L)
+            `when`(settlementRepository.findByIdAndMeetingIdForUpdate(55L, 1L)).thenReturn(settlement)
+            `when`(settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(55L)).thenReturn(listOf(payment(94L, 5L, PaymentStatus.PENDING, 55L)))
+            val exception = shouldThrow<ApiException> { settlementService.cancelSettlement(1L, 1L, 55L, null) }
+
+            Then("422 UNPROCESSABLE_ENTITY이고 정산은 그대로다") {
+                exception.errorCode shouldBe ErrorCode.UNPROCESSABLE_ENTITY
+                settlement.status shouldBe SettlementStatus.IN_PROGRESS
+                verifyNoInteractions(noticeService)
+            }
+        }
+    }
+
+    Given("환불 처리를 요청할 때") {
+        When("취소된 정산의 완납 항목이면") {
+            val paid = payment(95L, 5L, PaymentStatus.PAID, 56L)
+            `when`(settlementRepository.findByIdAndMeetingIdForUpdate(56L, 1L)).thenReturn(canceled(56L))
+            `when`(settlementMemberRepository.findByIdAndSettlementId(95L, 56L)).thenReturn(paid)
+            val response = settlementService.refundPayment(1L, 1L, 56L, 95L)
+
+            Then("환불됨(REFUNDED)과 환불 일시를 기록한다") {
+                response.status shouldBe PaymentStatus.REFUNDED
+                paid.status shouldBe PaymentStatus.REFUNDED
+                paid.refundedAt.shouldNotBeNull()
+            }
+        }
+
+        When("취소되지 않은 정산이면") {
+            val paid = payment(96L, 5L, PaymentStatus.PAID, 57L)
+            `when`(settlementRepository.findByIdAndMeetingIdForUpdate(57L, 1L)).thenReturn(cancelable(57L))
+            `when`(settlementMemberRepository.findByIdAndSettlementId(96L, 57L)).thenReturn(paid)
+            val exception = shouldThrow<ApiException> { settlementService.refundPayment(1L, 1L, 57L, 96L) }
+
+            Then("422 UNPROCESSABLE_ENTITY이고 납부 상태는 그대로다") {
+                exception.errorCode shouldBe ErrorCode.UNPROCESSABLE_ENTITY
+                paid.status shouldBe PaymentStatus.PAID
+            }
+        }
+
+        When("취소된 정산이지만 완납이 아니면") {
+            `when`(settlementRepository.findByIdAndMeetingIdForUpdate(58L, 1L)).thenReturn(canceled(58L))
+            `when`(settlementMemberRepository.findByIdAndSettlementId(97L, 58L)).thenReturn(payment(97L, 5L, PaymentStatus.UNPAID, 58L))
+            val exception = shouldThrow<ApiException> { settlementService.refundPayment(1L, 1L, 58L, 97L) }
+
+            Then("409 CONFLICT다") {
+                exception.errorCode shouldBe ErrorCode.CONFLICT
+            }
+        }
+
+        When("납부 항목이 없으면") {
+            `when`(settlementRepository.findByIdAndMeetingIdForUpdate(59L, 1L)).thenReturn(canceled(59L))
+            val exception = shouldThrow<ApiException> { settlementService.refundPayment(1L, 1L, 59L, 999L) }
+
+            Then("404 NOT_FOUND다") {
+                exception.errorCode shouldBe ErrorCode.NOT_FOUND
+            }
+        }
+    }
+
+    Given("취소된 정산에 납부 제출·승인·반려를 요청할 때") {
+        `when`(settlementRepository.findByIdAndMeetingIdForUpdate(60L, 1L)).thenReturn(canceled(60L))
+        `when`(settlementMemberRepository.findBySettlementIdAndMemberId(60L, 1L)).thenReturn(payment(98L, 1L, PaymentStatus.UNPAID, 60L))
+        `when`(settlementMemberRepository.findByIdAndSettlementId(99L, 60L)).thenReturn(payment(99L, 5L, PaymentStatus.PENDING, 60L))
+
+        listOf<Pair<String, () -> Any>>(
+            "submitPayment" to { settlementService.submitPayment(1L, 1L, 60L) },
+            "approvePayment" to { settlementService.approvePayment(1L, 1L, 60L, 99L) },
+            "rejectPayment" to { settlementService.rejectPayment(1L, 1L, 60L, 99L, null) }
+        ).forEach { (method, call) ->
+            When("$method 메서드를 호출하면") {
+                val exception = shouldThrow<ApiException> { call() }
+
+                Then("422 UNPROCESSABLE_ENTITY다") {
+                    exception.errorCode shouldBe ErrorCode.UNPROCESSABLE_ENTITY
+                }
+            }
+        }
+    }
+
+    Given("관리자가 아닌 사용자가 정산 취소·환불을 요청할 때") {
+        `when`(memberService.validateAdmin(1L, 6L)).thenThrow(ApiException(ErrorCode.FORBIDDEN, "모임 관리자만 요청할 수 있습니다."))
+
+        listOf<Pair<String, () -> Any>>(
+            "cancelSettlement" to { settlementService.cancelSettlement(1L, 6L, 50L, null) },
+            "refundPayment" to { settlementService.refundPayment(1L, 6L, 50L, 91L) }
+        ).forEach { (method, call) ->
+            When("$method 메서드를 호출하면") {
+                val exception = shouldThrow<ApiException> { call() }
+
+                Then("403 FORBIDDEN이고 정산을 조회하지 않는다") {
+                    exception.errorCode shouldBe ErrorCode.FORBIDDEN
+                    verifyNoInteractions(settlementRepository, settlementMemberRepository, noticeService)
+                }
+            }
+        }
+    }
+
+    Given("취소된 정산을 대체하는 정산을 만들 때") {
+        fun request(replacesId: Long) = SettlementCreateRequest(
+            title = "10월 정기 모임 식비 (재청구)",
+            replacesSettlementId = replacesId,
+            totalAmount = 10000,
+            memberIds = listOf(1L, 5L),
+            bankName = "국민은행",
+            accountNumber = "123456789012",
+            accountHolder = "김모아",
+            dueAt = OffsetDateTime.parse("2026-10-20T14:59:00Z")
+        )
+
+        When("같은 모임의 취소된 정산이고 아직 대체되지 않았으면") {
+            `when`(settlementRepository.findByIdAndMeetingIdForUpdate(61L, 1L)).thenReturn(canceled(61L))
+            `when`(settlementRepository.save(any(Settlement::class.java))).thenReturn(settlement(62L))
+            settlementService.createSettlement(1L, 1L, request(61L))
+
+            Then("대체한 정산 ID를 함께 저장한다") {
+                val captor = ArgumentCaptor.forClass(Settlement::class.java)
+                verify(settlementRepository).save(captor.capture())
+                captor.value.replacesSettlementId shouldBe 61L
+            }
+        }
+
+        listOf(
+            Triple("대체할 정산이 없으면", 63L, ErrorCode.NOT_FOUND),
+            Triple("대체할 정산이 취소되지 않았으면", 64L, ErrorCode.UNPROCESSABLE_ENTITY),
+            Triple("이미 다른 정산으로 대체됐으면", 65L, ErrorCode.UNPROCESSABLE_ENTITY)
+        ).forEach { (case, replacesId, errorCode) ->
+            When(case) {
+                `when`(settlementRepository.findByIdAndMeetingIdForUpdate(64L, 1L)).thenReturn(cancelable(64L))
+                `when`(settlementRepository.findByIdAndMeetingIdForUpdate(65L, 1L)).thenReturn(canceled(65L))
+                `when`(settlementRepository.findByReplacesSettlementId(65L)).thenReturn(settlement(66L))
+                val exception = shouldThrow<ApiException> { settlementService.createSettlement(1L, 1L, request(replacesId)) }
+
+                Then("${errorCode.name}이고 정산을 저장하지 않는다") {
+                    exception.errorCode shouldBe errorCode
+                    verify(settlementRepository, never()).save(any(Settlement::class.java))
+                }
+            }
+        }
+    }
+
+    Given("취소·환불·대체가 있는 정산을 상세 조회할 때") {
+        `when`(settlementRepository.findByIdAndMeetingId(67L, 1L)).thenReturn(canceled(67L))
+        `when`(settlementRepository.findByReplacesSettlementId(67L)).thenReturn(settlement(68L))
+        `when`(settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(67L)).thenReturn(
+            listOf(
+                payment(100L, 1L, PaymentStatus.REFUNDED, 67L).apply { refundedAt = OffsetDateTime.parse("2026-10-16T01:00:00Z") },
+                payment(101L, 5L, PaymentStatus.PAID, 67L)
+            )
+        )
+
+        When("getSettlement 메서드를 호출하면") {
+            val response = settlementService.getSettlement(1L, 1L, 67L)
+
+            Then("취소 일시·사유, 대체한 정산, 환불 인원과 환불 일시를 반환하고 환불 금액은 납부 금액에서 빠진다") {
+                response.status shouldBe SettlementStatus.CANCELED
+                response.cancelReason shouldBe "금액 입력 오류"
+                response.canceledAt.toString() shouldBe "2026-10-15T10:00+09:00"
+                response.replacedBySettlementId shouldBe 68L
+                response.summary.refundedCount shouldBe 1
+                response.summary.paidCount shouldBe 1
+                response.summary.paidAmount shouldBe 5000
+                response.payments.shouldNotBeNull()[0].refundedAt.toString() shouldBe "2026-10-16T10:00+09:00"
             }
         }
     }
