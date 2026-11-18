@@ -119,7 +119,7 @@ class NoticeService(
             noticeId = checkNotNull(notice.id) { "공지사항 ID가 null입니다." },
             title = notice.title,
             content = notice.content,
-            author = authorsOf(listOf(notice.membersId)).getValue(notice.membersId),
+            author = authorsOf(meetingId, listOf(notice.membersId)).getValue(notice.membersId),
             settlementId = settlementRepository.findFirstByNoticeId(noticeId)?.id,
             createdAt = notice.createdAt.withOffsetSameInstant(KST)
         )
@@ -147,7 +147,7 @@ class NoticeService(
         }
         val totalCount = memberRepository.countByMeetingId(meetingId).toInt()
         // 공지마다 작성자를 조회하지 않도록 페이지의 작성자를 한 번에 조회
-        val authors = authorsOf(noticePage.content.map { it.membersId })
+        val authors = authorsOf(meetingId, noticePage.content.map { it.membersId })
 
         val summaries = noticePage.content.map { notice ->
             val noticeId = checkNotNull(notice.id) { "공지사항 ID가 null입니다." }
@@ -246,9 +246,10 @@ class NoticeService(
     }
 
     // 작성자 구성원 ID별 표시 정보 (구성원이 나갔거나 사용자가 없으면 "탈퇴한 사용자"와 기본 프로필 색)
-    private fun authorsOf(authorMemberIds: Collection<Long>): Map<Long, NoticeAuthorResponse> {
+    // 잘못 저장된 ID가 다른 모임 구성원을 가리켜도 그 사람 정보가 노출되지 않도록 공지와 같은 모임 구성원만 사용
+    private fun authorsOf(meetingId: Long, authorMemberIds: Collection<Long>): Map<Long, NoticeAuthorResponse> {
         val ids = authorMemberIds.toSet()
-        val membersById = memberRepository.findAllById(ids).associateBy { it.id }
+        val membersById = memberRepository.findAllById(ids).filter { it.meetingId == meetingId }.associateBy { it.id }
         val usersById = appUserRepository.findAllById(membersById.values.map { it.userId }).associateBy { it.id }
 
         return ids.associateWith { memberId ->

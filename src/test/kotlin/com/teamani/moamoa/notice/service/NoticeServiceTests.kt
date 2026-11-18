@@ -190,7 +190,7 @@ class NoticeServiceTests : BehaviorSpec({
         }
     }
 
-    Given("작성자가 남아 있는 공지와 작성자가 모임을 나간 공지가 함께 조회될 때") {
+    Given("작성자가 남아 있는 공지, 모임을 나간 공지, 다른 모임 구성원이 작성자로 저장된 공지가 함께 조회될 때") {
         val repository: NoticeRepository = mock(NoticeRepository::class.java)
         val members: MemberRepository = mock(MemberRepository::class.java)
         val users: AppUserRepository = mock(AppUserRepository::class.java)
@@ -200,35 +200,35 @@ class NoticeServiceTests : BehaviorSpec({
         val notices = listOf(
             Notice(id = 31L, meetingId = meetingId, membersId = 3L, title = "남은 작성자", content = "내용"),
             Notice(id = 30L, meetingId = meetingId, membersId = 7L, title = "나간 작성자", content = "내용"),
-            Notice(id = 29L, meetingId = meetingId, membersId = 3L, title = "남은 작성자 2", content = "내용")
+            Notice(id = 29L, meetingId = meetingId, membersId = 3L, title = "남은 작성자 2", content = "내용"),
+            Notice(id = 28L, meetingId = meetingId, membersId = 8L, title = "잘못 저장된 작성자", content = "내용")
         )
-        `when`(repository.findAllByMeetingId(meetingId, pageable)).thenReturn(PageImpl(notices, pageable, 3L))
-        // 구성원 7은 모임을 나가 구성원 행이 없음
-        `when`(members.findAllById(setOf(3L, 7L)))
-            .thenReturn(listOf(Member(id = 3L, meetingId = meetingId, userId = 10L, role = MemberRole.ADMIN)))
-        `when`(users.findAllById(listOf(10L))).thenReturn(
+        `when`(repository.findAllByMeetingId(meetingId, pageable)).thenReturn(PageImpl(notices, pageable, 4L))
+        // 구성원 7은 모임을 나가 구성원 행이 없음, 구성원 8은 다른 모임(2) 구성원
+        `when`(members.findAllById(setOf(3L, 7L, 8L))).thenReturn(
             listOf(
-                AppUser(
-                    id = 10L,
-                    name = "김모아",
-                    email = "author@moamoa.test",
-                    password = "password",
-                    profileColor = ProfileColor.DARK,
-                    termsAgreedAt = OffsetDateTime.now()
-                )
+                Member(id = 3L, meetingId = meetingId, userId = 10L, role = MemberRole.ADMIN),
+                Member(id = 8L, meetingId = 2L, userId = 20L, role = MemberRole.ADMIN)
             )
         )
+        fun user(id: Long, name: String, color: ProfileColor) = AppUser(
+            id = id, name = name, email = "user$id@moamoa.test", password = "password", profileColor = color, termsAgreedAt = OffsetDateTime.now()
+        )
+        `when`(users.findAllById(listOf(10L))).thenReturn(listOf(user(10L, "김모아", ProfileColor.DARK)))
+        // 모임 확인이 빠지면 다른 모임 사용자까지 조회되는 경우
+        `when`(users.findAllById(listOf(10L, 20L))).thenReturn(listOf(user(10L, "김모아", ProfileColor.DARK), user(20L, "다른모임", ProfileColor.GRAY)))
 
         When("getNotices를 호출하면") {
             val authors = service.getNotices(meetingId, 0, 20, 1L).notices.map { it.author }
 
-            Then("작성자 정보를 한 번에 조회해 채우고, 나간 작성자는 \"탈퇴한 사용자\"와 기본 프로필 색으로 반환한다") {
+            Then("작성자 정보를 한 번에 조회해 채우고, 나간 작성자와 다른 모임 구성원은 \"탈퇴한 사용자\"와 기본 프로필 색으로 반환한다") {
                 authors.map { Triple(it.memberId, it.userName, it.profileColor) } shouldBe listOf(
                     Triple(3L, "김모아", ProfileColor.DARK),
                     Triple(7L, "탈퇴한 사용자", ProfileColor.LIGHT_BLUE),
-                    Triple(3L, "김모아", ProfileColor.DARK)
+                    Triple(3L, "김모아", ProfileColor.DARK),
+                    Triple(8L, "탈퇴한 사용자", ProfileColor.LIGHT_BLUE)
                 )
-                verify(members).findAllById(setOf(3L, 7L))
+                verify(members).findAllById(setOf(3L, 7L, 8L))
                 verify(users).findAllById(listOf(10L))
             }
         }

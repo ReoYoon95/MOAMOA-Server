@@ -192,7 +192,7 @@ class SettlementService(
                 paidAmount = payments.filter { it.status == PaymentStatus.PAID }.sumOf { it.amount }
             ),
             // 구성원 전원의 납부 현황은 ADMIN에게만 제공
-            payments = if (member.role == MemberRole.ADMIN) toPaymentResponses(payments) else null
+            payments = if (member.role == MemberRole.ADMIN) toPaymentResponses(meetingId, payments) else null
         )
     }
 
@@ -375,8 +375,11 @@ class SettlementService(
     }
 
     // 납부자 이름은 한 번에 조회, 모임을 나갔거나 탈퇴해 구성원 행이 없으면 "탈퇴한 사용자" (명세 4-3)
-    private fun toPaymentResponses(payments: List<SettlementMember>): List<PaymentResponse> {
-        val membersById = memberRepository.findAllById(payments.map { it.memberId }.toSet()).associateBy { it.id }
+    // #50 전에 만든 정산은 대상 검증이 없어 다른 모임 구성원 ID가 있을 수 있으므로, 같은 모임 구성원만 이름 표시
+    private fun toPaymentResponses(meetingId: Long, payments: List<SettlementMember>): List<PaymentResponse> {
+        val membersById = memberRepository.findAllById(payments.map { it.memberId }.toSet())
+            .filter { it.meetingId == meetingId }
+            .associateBy { it.id }
         val usersById = appUserRepository.findAllById(membersById.values.map { it.userId }).associateBy { it.id }
 
         return payments.map { payment ->
