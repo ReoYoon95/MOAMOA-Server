@@ -4,6 +4,7 @@ import com.jayway.jsonpath.JsonPath
 import com.teamani.moamoa.global.exception.ApiException
 import com.teamani.moamoa.global.exception.ErrorCode
 import com.teamani.moamoa.user.dto.LoginRequest
+import com.teamani.moamoa.user.dto.PasswordResetMailRequest
 import com.teamani.moamoa.user.dto.PasswordResetRequest
 import com.teamani.moamoa.user.dto.TokenRefreshRequest
 import com.teamani.moamoa.user.entity.PasswordResetToken
@@ -65,7 +66,7 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
     @MockitoSpyBean
     lateinit var appUserRepository: AppUserRepository
 
-    @Autowired
+    @MockitoSpyBean
     lateinit var passwordResetTokenRepository: PasswordResetTokenRepository
 
     @Autowired
@@ -163,6 +164,40 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
             }
         }
 
+        Given("같은 사용자가 재설정 메일을 동시에 두 번 요청할 때") {
+            val email = newEmail()
+            signUp(email)
+            val userId = checkNotNull(appUserRepository.findByEmail(email)?.id)
+
+            When("앞 요청이 이전 토큰을 지운 직후 멈춘 사이에 뒤 요청이 들어오면") {
+                // 앞 요청의 이전 토큰 삭제(첫 호출) 직후 멈춤. 잠금이 없으면 뒤 요청이 끝까지 진행해 두 토큰이 모두 남음
+                val pause = Pause()
+                doAnswer(afterReal(passwordResetTokenRepository) { pause.hold() })
+                    .`when`(passwordResetTokenRepository).deleteAllByUserId(anyLong())
+                val executor = Executors.newFixedThreadPool(2)
+                val errors = try {
+                    val first = executor.submit(Callable {
+                        runCatching { passwordResetService.requestReset(PasswordResetMailRequest(email)) }.exceptionOrNull()
+                    })
+                    pause.awaitPaused()
+                    val second = executor.submit(Callable {
+                        runCatching { passwordResetService.requestReset(PasswordResetMailRequest(email)) }.exceptionOrNull()
+                    })
+                    Thread.sleep(WAIT_MILLIS)
+                    pause.release()
+                    listOf(first, second).map { it.get(10, TimeUnit.SECONDS) }
+                } finally {
+                    executor.shutdownNow()
+                    reset(passwordResetTokenRepository)
+                }
+
+                Then("두 요청 모두 성공하고 유효한 재설정 토큰은 하나만 남는다") {
+                    errors.filterNotNull() shouldBe emptyList()
+                    passwordResetTokenRepository.findAll().count { it.userId == userId } shouldBe 1
+                }
+            }
+        }
+
         Given("재설정이 사용자를 잠근 채 멈춘 사이에 토큰 재발급이나 이전 비밀번호 로그인이 들어올 때") {
             val email = newEmail()
             val refreshToken = signUp(email)
@@ -172,7 +207,7 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
             When("재설정이 끝나면") {
                 // 재설정의 사용자 잠금 조회(첫 호출) 직후 멈춤
                 val pause = Pause()
-                doAnswer(afterReal { pause.hold() }).`when`(appUserRepository).findByIdForUpdate(anyLong())
+                doAnswer(afterReal(appUserRepository) { pause.hold() }).`when`(appUserRepository).findByIdForUpdate(anyLong())
                 val executor = Executors.newFixedThreadPool(3)
                 val results = try {
                     val resetting = executor.submit(Callable {
@@ -244,8 +279,8 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
     private fun newEmail() = "reset-${UUID.randomUUID()}@moamoa.test"
 
     // 실제 Repository 메서드를 호출한 뒤 끼워 넣은 동작 실행 (Spring Data 프록시 spy의 기본 응답이 실제 Repository 위임)
-    private fun afterReal(action: () -> Unit) = Answer { invocation ->
-        val result = mockingDetails(appUserRepository).mockCreationSettings.defaultAnswer.answer(invocation)
+    private fun afterReal(spy: Any, action: () -> Unit) = Answer { invocation ->
+        val result = mockingDetails(spy).mockCreationSettings.defaultAnswer.answer(invocation)
         action()
         result
     }

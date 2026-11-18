@@ -35,7 +35,8 @@ class PasswordResetService(
     @Transactional
     fun requestReset(request: PasswordResetMailRequest): PasswordResetResponse {
         val email = requireNotNull(request.email) { "이메일은 필수입니다." }.lowercase()
-        val user = appUserRepository.findByEmail(email)?.takeIf { it.deletedAt == null }
+        // 같은 사용자의 동시 요청은 사용자 잠금으로 차례로 처리해, 나중 요청이 앞 요청의 링크를 지우게 함 (유효한 링크는 하나)
+        val user = appUserRepository.findByEmailForUpdate(email)?.takeIf { it.deletedAt == null }
             ?: return PasswordResetResponse()
         val userId = checkNotNull(user.id) { "사용자 식별자가 없습니다." }
 

@@ -5,6 +5,7 @@ import jakarta.persistence.Entity
 import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
+import jakarta.persistence.Index
 import jakarta.persistence.Table
 import jakarta.persistence.UniqueConstraint
 import java.time.OffsetDateTime
@@ -16,6 +17,8 @@ import java.time.OffsetDateTime
     uniqueConstraints = [
         UniqueConstraint(name = "uk_password_reset_token_token_hash", columnNames = ["token_hash"]),
     ],
+    // 재설정 요청마다 실행되는 사용자별 이전 토큰 삭제를 전체 조회 없이 처리
+    indexes = [Index(name = "idx_password_reset_token_user_id", columnList = "user_id")],
 )
 class PasswordResetToken(
     // 재설정 대상 사용자 ID
