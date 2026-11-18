@@ -176,6 +176,29 @@ class NoticeReadIntegrationTests : BehaviorSpec() {
             }
         }
 
+        Given("다른 모임 구성원의 ID가 작성자로 잘못 저장된 공지가 있을 때") {
+            val group = savedGroup()
+            val otherGroup = savedGroup()
+            // 기존 운영 데이터·임시 구성원 ID처럼 다른 모임 관리자의 구성원 ID가 작성자로 저장된 경우
+            val noticeId = noticeService.createNoticeByMember(
+                group.meetingId,
+                otherGroup.adminMemberId,
+                NoticeCreateRequest(title = "공지", content = "내용")
+            ).noticeId.also { noticeIds += it }
+
+            When("공지 목록과 상세를 조회하면") {
+                val listAuthor = noticeService.getNotices(group.meetingId, 0, 20, group.adminUserId).notices.single().author
+                val detailAuthor = noticeService.getNoticeDetail(group.meetingId, noticeId, group.adminUserId).author
+
+                Then("다른 모임 사용자의 이름·프로필 색은 노출되지 않고 \"탈퇴한 사용자\"와 기본 프로필 색으로 반환한다") {
+                    listOf(listAuthor, detailAuthor).forEach { author ->
+                        author.userName shouldBe "탈퇴한 사용자"
+                        author.profileColor shouldBe ProfileColor.LIGHT_BLUE
+                    }
+                }
+            }
+        }
+
         Given("관리자가 아닌 구성원, 모임 밖 사용자, 종료된 모임의 공지 요청이 주어졌을 때") {
             val group = savedGroup()
             val noticeId = createdNotice(group)
