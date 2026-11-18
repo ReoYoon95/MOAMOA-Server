@@ -379,7 +379,9 @@ class SettlementServiceTests : BehaviorSpec({
                 ),
                 SettlementMember(id = 82L, settlementId = 40L, memberId = 5L, amount = 15000, status = PaymentStatus.PAID),
                 SettlementMember(id = 83L, settlementId = 40L, memberId = 9L, amount = 15000),
-                SettlementMember(id = 84L, settlementId = 40L, memberId = 8001L, amount = 15000)
+                SettlementMember(id = 84L, settlementId = 40L, memberId = 8001L, amount = 15000),
+                // #50 전 데이터처럼 다른 모임(2) 구성원이 대상에 들어간 경우
+                SettlementMember(id = 85L, settlementId = 40L, memberId = 9001L, amount = 15000)
             )
         )
 
@@ -391,16 +393,16 @@ class SettlementServiceTests : BehaviorSpec({
                 myPayment.paymentId shouldBe 81L
                 myPayment.status shouldBe PaymentStatus.PENDING
 
-                response.summary.totalCount shouldBe 4
-                response.summary.unpaidCount shouldBe 2
+                response.summary.totalCount shouldBe 5
+                response.summary.unpaidCount shouldBe 3
                 response.summary.pendingCount shouldBe 1
                 response.summary.paidCount shouldBe 1
                 response.summary.paidAmount shouldBe 15000
 
                 val payments = response.payments.shouldNotBeNull()
-                payments.map { it.memberId } shouldBe listOf(1L, 5L, 9L, 8001L)
-                // 모임을 나간 구성원(8001)은 "탈퇴한 사용자"
-                payments.map { it.userName } shouldBe listOf("사용자101", "사용자105", "사용자109", "탈퇴한 사용자")
+                payments.map { it.memberId } shouldBe listOf(1L, 5L, 9L, 8001L, 9001L)
+                // 모임을 나간 구성원(8001)과 다른 모임 구성원(9001)은 "탈퇴한 사용자"
+                payments.map { it.userName } shouldBe listOf("사용자101", "사용자105", "사용자109", "탈퇴한 사용자", "탈퇴한 사용자")
                 payments[0].submittedAt.toString() shouldBe "2026-10-15T20:00+09:00"
                 response.noticeId.shouldBeNull()
                 response.scheduleTitle shouldBe "10월 정기 모임"
@@ -415,7 +417,7 @@ class SettlementServiceTests : BehaviorSpec({
 
             Then("본인 납부 정보와 합계만 반환하고 구성원별 납부 목록은 null이다") {
                 response.myPayment.shouldNotBeNull().paymentId shouldBe 82L
-                response.summary.totalCount shouldBe 4
+                response.summary.totalCount shouldBe 5
                 response.payments.shouldBeNull()
             }
         }
