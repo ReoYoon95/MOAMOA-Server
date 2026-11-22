@@ -4,6 +4,7 @@ import com.teamani.moamoa.global.exception.ApiException
 import com.teamani.moamoa.global.exception.ErrorCode
 import com.teamani.moamoa.member.repository.MemberRepository
 import com.teamani.moamoa.member.service.MemberService
+import com.teamani.moamoa.notice.dto.NoticeAuthorResponse
 import com.teamani.moamoa.notice.dto.NoticeCreateRequest
 import com.teamani.moamoa.notice.dto.NoticeCreateResponse
 import com.teamani.moamoa.notice.dto.NoticeDeleteResponse
@@ -40,43 +41,41 @@ class NoticeService(
     private val appUserRepository: AppUserRepository
 ) {
 
+    // 공지 작성 API(3-1): 요청한 사용자의 구성원 ID를 작성자로 저장
     @Transactional
     fun createNotice(meetingId: Long, userId: Long, request: NoticeCreateRequest): NoticeCreateResponse {
-        // 관리자(ADMIN) 권한 검증 (추후 Member 도메인 연동)
-        validateAdmin(meetingId, userId)
+        // 모임 없음·종료 404 → 구성원 아님·ADMIN 아님 403
+        val authorMemberId = checkNotNull(memberService.validateAdmin(meetingId, userId).id) { "구성원 식별자가 없습니다." }
 
-        // 요청 DTO 값으로 실제 Entity 객체 생성
-        val notice = Notice(
-            meetingId = meetingId,
-            membersId = userId,
-            title = requireNotNull(request.title) { "제목은 필수입니다." },
-            content = requireNotNull(request.content) { "내용은 필수입니다." }
+        return createNoticeByMember(meetingId, authorMemberId, request)
+    }
+
+    // 정산·정기 회비 안내 공지처럼 작성자 구성원 ID가 정해진 내부 호출용 (권한 검증은 호출하는 쪽에서 처리)
+    @Transactional
+    fun createNoticeByMember(meetingId: Long, authorMemberId: Long, request: NoticeCreateRequest): NoticeCreateResponse {
+        val savedNotice = noticeRepository.save(
+            Notice(
+                meetingId = meetingId,
+                membersId = authorMemberId,
+                title = requireNotNull(request.title) { "제목은 필수입니다." },
+                content = requireNotNull(request.content) { "내용은 필수입니다." }
+            )
         )
-
-        // DB 영구 저장
-        val savedNotice = noticeRepository.save(notice)
         val noticeId = checkNotNull(savedNotice.id) { "공지 식별자가 생성되지 않았습니다." }
 
-        // 작성자는 작성할 때 읽음으로 기록 (정산·정기 회비 안내 공지 포함)
-        noticeReadRepository.save(NoticeRead(noticeId = noticeId, memberId = savedNotice.membersId, readAt = savedNotice.createdAt))
+        // 작성자는 작성할 때 읽음으로 기록
+        noticeReadRepository.save(NoticeRead(noticeId = noticeId, memberId = authorMemberId, readAt = savedNotice.createdAt))
 
-        // 성공 응답 DTO 반환
         return NoticeCreateResponse(
             noticeId = noticeId,
             title = savedNotice.title
         )
     }
 
-    // 관리자 권한 검증 함수 (추후 Member 도메인 연동 자리)
-    private fun validateAdmin(meetingId: Long, userId: Long) {
-        // TODO: memberService 또는 memberRepository를 조회하여 해당 사용자가 모임의 ADMIN인지 확인
-        // 만약 ADMIN이 아니면 403 FORBIDDEN 성격의 예외(CustomException)를 throw하도록 연결.
-    }
-
     @Transactional
     fun deleteNotice(meetingId: Long, noticeId: Long, userId: Long): NoticeDeleteResponse {
-        // ADMIN 권한 검증 (Member 도메인 연동 후속 이슈 처리 예정)
-        validateAdmin(meetingId, userId)
+        // 모임 없음·종료 404 → 구성원 아님·ADMIN 아님 403
+        memberService.validateAdmin(meetingId, userId)
 
         // 공지 잠금 조회 (읽음 처리와 직렬화해 삭제 후 읽음 기록이 남지 않게 함, 없거나 다른 모임 공지면 404)
         val notice = noticeRepository.findByIdAndMeetingIdForUpdate(noticeId, meetingId)
@@ -91,6 +90,9 @@ class NoticeService(
     }
     @Transactional(readOnly = true)
     fun getNoticeDetail(meetingId: Long, noticeId: Long, currentUserId: Long): NoticeDetailResponse {
+        // 모임 없음·종료 404 → 구성원 아님 403
+        memberService.validateMember(meetingId, currentUserId)
+
         val notice = noticeRepository.findById(noticeId)
             .filter { it.meetingId == meetingId }
             .orElseThrow { ApiException(ErrorCode.NOT_FOUND, "공지사항을 찾을 수 없습니다.") }
@@ -99,6 +101,7 @@ class NoticeService(
             noticeId = checkNotNull(notice.id) { "공지사항 ID가 null입니다." },
             title = notice.title,
             content = notice.content,
+            author = authorsOf(meetingId, listOf(notice.membersId)).getValue(notice.membersId),
             settlementId = settlementRepository.findFirstByNoticeId(noticeId)?.id,
             createdAt = notice.createdAt.withOffsetSameInstant(KST)
         )
@@ -111,6 +114,9 @@ class NoticeService(
         size: Int,
         currentUserId: Long
     ): NoticeListResponse {
+        // 모임 없음·종료 404 → 구성원 아님 403
+        memberService.validateMember(meetingId, currentUserId)
+
         val pageable = PageRequest.of(page, size, Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")))
         val noticePage = noticeRepository.findAllByMeetingId(meetingId, pageable)
 
@@ -122,12 +128,15 @@ class NoticeService(
             noticeReadRepository.countGroupByNoticeIdIn(meetingId, noticeIds).associate { it.noticeId to it.readCount.toInt() }
         }
         val totalCount = memberRepository.countByMeetingId(meetingId).toInt()
+        // 공지마다 작성자를 조회하지 않도록 페이지의 작성자를 한 번에 조회
+        val authors = authorsOf(meetingId, noticePage.content.map { it.membersId })
 
         val summaries = noticePage.content.map { notice ->
             val noticeId = checkNotNull(notice.id) { "공지사항 ID가 null입니다." }
             NoticeSummaryResponse(
                 noticeId = noticeId,
                 title = notice.title,
+                author = authors.getValue(notice.membersId),
                 readCount = readCounts[noticeId] ?: 0,
                 totalCount = totalCount,
                 createdAt = notice.createdAt.withOffsetSameInstant(KST)
@@ -149,8 +158,8 @@ class NoticeService(
         userId: Long,
         request: NoticeUpdateRequest
     ): NoticeUpdateResponse {
-        // ADMIN 권한 검증 (Member 도메인 연동 후속 이슈 처리 예정)
-        validateAdmin(meetingId, userId)
+        // 모임 없음·종료 404 → 구성원 아님·ADMIN 아님 403
+        memberService.validateAdmin(meetingId, userId)
 
         // 공지가 없거나 다른 모임의 공지면 404
         val notice = noticeRepository.findById(noticeId)
@@ -218,8 +227,28 @@ class NoticeService(
         )
     }
 
+    // 작성자 구성원 ID별 표시 정보 (구성원이 나갔거나 사용자가 없으면 "탈퇴한 사용자"와 기본 프로필 색)
+    // 잘못 저장된 ID가 다른 모임 구성원을 가리켜도 그 사람 정보가 노출되지 않도록 공지와 같은 모임 구성원만 사용
+    private fun authorsOf(meetingId: Long, authorMemberIds: Collection<Long>): Map<Long, NoticeAuthorResponse> {
+        val ids = authorMemberIds.toSet()
+        val membersById = memberRepository.findAllById(ids).filter { it.meetingId == meetingId }.associateBy { it.id }
+        val usersById = appUserRepository.findAllById(membersById.values.map { it.userId }).associateBy { it.id }
+
+        return ids.associateWith { memberId ->
+            val user = membersById[memberId]?.let { usersById[it.userId] }
+            NoticeAuthorResponse(
+                memberId = memberId,
+                userName = user?.name ?: WITHDRAWN_USER_NAME,
+                profileColor = user?.profileColor ?: ProfileColor.LIGHT_BLUE
+            )
+        }
+    }
+
     companion object {
         // API 명세상 응답 일시는 KST(+09:00)
         private val KST: ZoneOffset = ZoneOffset.ofHours(9)
+
+        // 명세 3-2·3-3: 작성자가 모임을 나갔거나 탈퇴했을 때 표시 이름
+        private const val WITHDRAWN_USER_NAME = "탈퇴한 사용자"
     }
 }
