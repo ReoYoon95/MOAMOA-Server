@@ -78,9 +78,10 @@ class SettlementServiceTests : BehaviorSpec({
             )
         }
     }.`when`(appUserRepository).findAllById(any())
-    `when`(scheduleRepository.findByIdAndMeetingId(20L, 1L)).thenReturn(
-        Schedule(id = 20L, meetingId = 1L, title = "10월 정기 모임", startsAt = OffsetDateTime.parse("2026-10-11T10:00:00Z"))
-    )
+    // 생성은 일정 잠금 조회로 연결 일정을 확인하고, 상세는 일반 조회로 일정 정보를 채움
+    val linkedSchedule = Schedule(id = 20L, meetingId = 1L, title = "10월 정기 모임", startsAt = OffsetDateTime.parse("2026-10-11T10:00:00Z"))
+    `when`(scheduleRepository.findByIdAndMeetingIdForUpdate(20L, 1L)).thenReturn(linkedSchedule)
+    `when`(scheduleRepository.findByIdAndMeetingId(20L, 1L)).thenReturn(linkedSchedule)
 
     afterEach { clearInvocations(settlementRepository, settlementMemberRepository, noticeService, memberService) }
 
