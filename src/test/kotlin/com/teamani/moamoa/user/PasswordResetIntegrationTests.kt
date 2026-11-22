@@ -1,5 +1,8 @@
 package com.teamani.moamoa.user
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.jayway.jsonpath.JsonPath
 import com.teamani.moamoa.global.exception.ApiException
 import com.teamani.moamoa.global.exception.ErrorCode
@@ -12,6 +15,7 @@ import com.teamani.moamoa.user.repository.AppUserRepository
 import com.teamani.moamoa.user.repository.PasswordResetTokenRepository
 import com.teamani.moamoa.user.repository.RefreshTokenRepository
 import com.teamani.moamoa.user.service.AuthService
+import com.teamani.moamoa.user.service.PasswordResetMailSender
 import com.teamani.moamoa.user.service.PasswordResetService
 import com.teamani.moamoa.user.service.sha256
 import io.kotest.core.spec.style.BehaviorSpec
@@ -20,19 +24,26 @@ import io.kotest.matchers.shouldBe
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.anyLong
+import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.after
 import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.doAnswer
+import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.mockingDetails
 import org.mockito.Mockito.never
 import org.mockito.Mockito.reset
 import org.mockito.Mockito.timeout
 import org.mockito.Mockito.verify
+import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
 import org.springframework.beans.factory.annotation.Autowired
+import org.slf4j.LoggerFactory
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
+import org.springframework.core.env.Environment
 import org.springframework.http.MediaType
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.mail.MailSendException
 import org.springframework.mail.SimpleMailMessage
 import org.springframework.mail.javamail.JavaMailSender
 import org.springframework.test.context.ActiveProfiles
@@ -77,6 +88,12 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
 
     @Autowired
     lateinit var authService: AuthService
+
+    @Autowired
+    lateinit var jdbcTemplate: JdbcTemplate
+
+    @Autowired
+    lateinit var environment: Environment
 
     init {
         Given("가입한 이메일로 재설정 메일을 요청할 때") {
@@ -128,13 +145,14 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
             val email = newEmail()
             signUp(email)
             val userId = checkNotNull(appUserRepository.findByEmail(email)?.id)
+            val previous = requestResetAndGetToken(email)
+            // 새로 요청하면 이전 링크는 무효
+            requestResetAndGetToken(email)
+            // 메일 요청이 그 사용자의 기존 토큰을 지우므로, 만료 토큰은 요청이 끝난 뒤 저장해 DB에 남아 있는 상태로 검사
             val expired = "expired-${UUID.randomUUID()}"
             passwordResetTokenRepository.save(
                 PasswordResetToken(userId = userId, tokenHash = sha256(expired), expiresAt = OffsetDateTime.now().minusMinutes(1))
             )
-            val previous = requestResetAndGetToken(email)
-            // 새로 요청하면 이전 링크는 무효
-            requestResetAndGetToken(email)
 
             listOf("없는 토큰" to "unknown-${UUID.randomUUID()}", "10분이 지난 토큰" to expired, "새로 요청해 무효가 된 토큰" to previous)
                 .forEach { (case, token) ->
@@ -174,6 +192,10 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
                 val pause = Pause()
                 doAnswer(afterReal(passwordResetTokenRepository) { pause.hold() })
                     .`when`(passwordResetTokenRepository).deleteAllByUserId(anyLong())
+                // 두 요청이 모두 사용자 잠금 조회(findByEmailForUpdate)를 호출했는지 확인한 뒤 앞 요청을 풀어 줌
+                val arrived = CountDownLatch(2)
+                doAnswer(beforeReal(appUserRepository) { arrived.countDown() })
+                    .`when`(appUserRepository).findByEmailForUpdate(anyString())
                 val executor = Executors.newFixedThreadPool(2)
                 val errors = try {
                     val first = executor.submit(Callable {
@@ -183,12 +205,13 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
                     val second = executor.submit(Callable {
                         runCatching { passwordResetService.requestReset(PasswordResetMailRequest(email)) }.exceptionOrNull()
                     })
-                    Thread.sleep(WAIT_MILLIS)
+                    arrived.await(5, TimeUnit.SECONDS) shouldBe true
                     pause.release()
                     listOf(first, second).map { it.get(10, TimeUnit.SECONDS) }
                 } finally {
+                    pause.release()
                     executor.shutdownNow()
-                    reset(passwordResetTokenRepository)
+                    reset(passwordResetTokenRepository, appUserRepository)
                 }
 
                 Then("두 요청 모두 성공하고 유효한 재설정 토큰은 하나만 남는다") {
@@ -205,9 +228,23 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
             val token = requestResetAndGetToken(email)
 
             When("재설정이 끝나면") {
-                // 재설정의 사용자 잠금 조회(첫 호출) 직후 멈춤
+                // 재설정의 사용자 잠금 조회(첫 호출) 직후 멈춤. 뒤 요청(재발급 findByIdForUpdate, 로그인 findByEmailForUpdate)은
+                // 잠금 조회를 호출하는 순간 래치를 내려, 둘 다 잠금 조회에 도달한 뒤에 재설정을 풀어 줌
                 val pause = Pause()
-                doAnswer(afterReal(appUserRepository) { pause.hold() }).`when`(appUserRepository).findByIdForUpdate(anyLong())
+                val arrived = CountDownLatch(2)
+                val firstLock = AtomicBoolean(true)
+                doAnswer { invocation ->
+                    if (firstLock.getAndSet(false)) {
+                        val result = realAnswer(appUserRepository, invocation)
+                        pause.hold()
+                        result
+                    } else {
+                        arrived.countDown()
+                        realAnswer(appUserRepository, invocation)
+                    }
+                }.`when`(appUserRepository).findByIdForUpdate(anyLong())
+                doAnswer(beforeReal(appUserRepository) { arrived.countDown() })
+                    .`when`(appUserRepository).findByEmailForUpdate(anyString())
                 val executor = Executors.newFixedThreadPool(3)
                 val results = try {
                     val resetting = executor.submit(Callable {
@@ -220,11 +257,11 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
                     val loggingIn = executor.submit(Callable {
                         runCatching { authService.login(LoginRequest(email, OLD_PASSWORD)) }.exceptionOrNull()
                     })
-                    // 재발급·로그인이 사용자 잠금을 기다리는 상태가 되도록 잠시 둔 뒤 재설정을 진행
-                    Thread.sleep(WAIT_MILLIS)
+                    arrived.await(5, TimeUnit.SECONDS) shouldBe true
                     pause.release()
                     listOf(resetting, refreshing, loggingIn).map { it.get(10, TimeUnit.SECONDS) }
                 } finally {
+                    pause.release()
                     executor.shutdownNow()
                     reset(appUserRepository)
                 }
@@ -234,6 +271,87 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
                     (results[1] as ApiException).errorCode shouldBe ErrorCode.UNAUTHORIZED
                     (results[2] as ApiException).errorCode shouldBe ErrorCode.UNAUTHORIZED
                     refreshTokenRepository.findAllByUserIdOrderByCreatedAtAscIdAsc(userId).size shouldBe 0
+                }
+            }
+        }
+
+        Given("재설정이 사용자 잠금을 기다리는 사이에 링크가 만료될 때") {
+            val email = newEmail()
+            signUp(email)
+            val token = requestResetAndGetToken(email)
+
+            When("잠금을 얻은 뒤 재설정을 이어가면") {
+                // 처음 확인(만료 전)은 통과하고 사용자 잠금 조회를 호출하기 직전에 멈춘 사이, 만료 시각을 지금으로 당김
+                val pause = Pause()
+                doAnswer(beforeReal(appUserRepository) { pause.hold() }).`when`(appUserRepository).findByIdForUpdate(anyLong())
+                val executor = Executors.newSingleThreadExecutor()
+                val error = try {
+                    val resetting = executor.submit(Callable {
+                        runCatching { passwordResetService.resetPassword(PasswordResetRequest(token, "newpass123")) }.exceptionOrNull()
+                    })
+                    pause.awaitPaused()
+                    jdbcTemplate.update(
+                        "update password_reset_token set expires_at = ? where token_hash = ?",
+                        OffsetDateTime.now(),
+                        sha256(token)
+                    )
+                    // 만료 시각이 확실히 지나도록 잠깐 둔 뒤 진행
+                    Thread.sleep(EXPIRE_MARGIN_MILLIS)
+                    pause.release()
+                    resetting.get(10, TimeUnit.SECONDS)
+                } finally {
+                    pause.release()
+                    executor.shutdownNow()
+                    reset(appUserRepository)
+                }
+
+                Then("잠금을 얻은 뒤의 시각으로 만료를 판단해 400 VALIDATION_ERROR(field=token)이고 비밀번호는 바뀌지 않는다") {
+                    val exception = error as ApiException
+                    exception.errorCode shouldBe ErrorCode.VALIDATION_ERROR
+                    exception.details?.single()?.field shouldBe "token"
+                    login(email, OLD_PASSWORD).andExpect { status { isOk() } }
+                }
+            }
+        }
+
+        Given("메일 서버가 수신자 주소가 들어간 사유로 발송을 거절할 때") {
+            val email = newEmail()
+            signUp(email)
+            val logger = LoggerFactory.getLogger(PasswordResetMailSender::class.java) as Logger
+            val appender = ListAppender<ILoggingEvent>().apply { start() }
+
+            When("재설정 메일을 요청하면") {
+                logger.addAppender(appender)
+                try {
+                    doThrow(MailSendException("550 5.1.1 <$email> recipient rejected"))
+                        .`when`(mailSender).send(any(SimpleMailMessage::class.java))
+                    post("/v1/auth/password-reset-requests", """{ "email": "$email" }""").andExpect { status { isOk() } }
+                    // 커밋 후 별도 스레드에서 발송·로그가 끝날 때까지 대기
+                    val deadline = System.currentTimeMillis() + 5000
+                    while (appender.list.isEmpty() && System.currentTimeMillis() < deadline) {
+                        Thread.sleep(50)
+                    }
+                } finally {
+                    logger.detachAppender(appender)
+                    reset(mailSender)
+                }
+
+                Then("실패 로그에는 userId와 예외 종류만 남고 수신자 주소와 예외 메시지·스택은 남지 않는다") {
+                    val event = appender.list.single()
+                    event.formattedMessage.contains("MailSendException") shouldBe true
+                    event.formattedMessage.contains(email) shouldBe false
+                    event.throwableProxy shouldBe null
+                }
+            }
+        }
+
+        Given("메일 발송 설정을 확인할 때") {
+            When("서버 설정을 읽으면") {
+                Then("STARTTLS 필수와 연결·읽기·쓰기 제한 시간이 설정되어 있다") {
+                    environment.getProperty("spring.mail.properties.mail.smtp.starttls.required") shouldBe "true"
+                    environment.getProperty("spring.mail.properties.mail.smtp.connectiontimeout") shouldBe "5000"
+                    environment.getProperty("spring.mail.properties.mail.smtp.timeout") shouldBe "5000"
+                    environment.getProperty("spring.mail.properties.mail.smtp.writetimeout") shouldBe "5000"
                 }
             }
         }
@@ -278,11 +396,21 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
 
     private fun newEmail() = "reset-${UUID.randomUUID()}@moamoa.test"
 
-    // 실제 Repository 메서드를 호출한 뒤 끼워 넣은 동작 실행 (Spring Data 프록시 spy의 기본 응답이 실제 Repository 위임)
+    // Spring Data 프록시 spy의 기본 응답(실제 Repository 위임)으로 실제 메서드 호출
+    private fun realAnswer(spy: Any, invocation: InvocationOnMock): Any? =
+        mockingDetails(spy).mockCreationSettings.defaultAnswer.answer(invocation)
+
+    // 실제 Repository 메서드를 호출한 뒤 끼워 넣은 동작 실행
     private fun afterReal(spy: Any, action: () -> Unit) = Answer { invocation ->
-        val result = mockingDetails(spy).mockCreationSettings.defaultAnswer.answer(invocation)
+        val result = realAnswer(spy, invocation)
         action()
         result
+    }
+
+    // 끼워 넣은 동작 실행 후 실제 Repository 메서드 호출
+    private fun beforeReal(spy: Any, action: () -> Unit) = Answer { invocation ->
+        action()
+        realAnswer(spy, invocation)
     }
 
     // 첫 호출만 멈추고, 테스트가 해제할 때까지 대기
@@ -308,7 +436,7 @@ class PasswordResetIntegrationTests : BehaviorSpec() {
     companion object {
         private const val OLD_PASSWORD = "password1"
 
-        // 다른 요청을 기다리는 시간 (H2 잠금 대기 2초보다 짧게)
-        private const val WAIT_MILLIS = 500L
+        // 당긴 만료 시각이 잠금 뒤 판단 시각보다 확실히 앞서도록 두는 간격
+        private const val EXPIRE_MARGIN_MILLIS = 20L
     }
 }

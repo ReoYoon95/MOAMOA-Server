@@ -34,8 +34,8 @@ class PasswordResetMailSender(
         try {
             mailSender.send(message)
         } catch (ex: MailException) {
-            // 이메일·토큰은 로그에 남기지 않음
-            log.error("비밀번호 재설정 메일 발송 실패 userId={}", event.userId, ex)
+            // 이메일·토큰은 로그에 남기지 않음. SMTP 거절 사유에 수신자 주소가 들어갈 수 있어 예외 메시지·스택도 남기지 않고 종류만 기록
+            log.error("비밀번호 재설정 메일 발송 실패 userId={}, error={}", event.userId, ex.javaClass.simpleName)
         }
     }
 }

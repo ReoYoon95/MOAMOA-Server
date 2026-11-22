@@ -16,6 +16,12 @@ spring:
     properties:
       mail.smtp.auth: true
       mail.smtp.starttls.enable: true
+      # 재설정 링크가 암호화 없이 나가지 않도록 STARTTLS를 못 하면 보내지 않음
+      mail.smtp.starttls.required: true
+      # 응답 없는 메일 서버가 발송 스레드를 계속 붙잡지 않도록 연결·읽기·쓰기 제한 시간(ms)
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
 
 management:
   health:

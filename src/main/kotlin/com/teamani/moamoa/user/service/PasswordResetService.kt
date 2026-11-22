@@ -30,8 +30,9 @@ class PasswordResetService(
 
     private val secureRandom = SecureRandom()
 
-    // 7-5: 가입 여부가 드러나지 않도록 미가입·탈퇴 이메일도 같은 응답
-    // 메일은 커밋 후 별도 스레드에서 보내 응답 내용·시간이 가입 여부와 상관없이 같음 (PasswordResetMailSender)
+    // 7-5: 가입 여부가 드러나지 않도록 미가입·탈퇴 이메일도 같은 응답(상태 코드·본문)
+    // 메일은 커밋 후 별도 스레드에서 보내 메일 발송 시간은 응답에서 빠짐 (PasswordResetMailSender)
+    // 가입한 이메일은 잠금·토큰 저장까지 하고 응답하므로 처리 시간 차이는 남음
     @Transactional
     fun requestReset(request: PasswordResetMailRequest): PasswordResetResponse {
         val email = requireNotNull(request.email) { "이메일은 필수입니다." }.lowercase()
@@ -63,7 +64,8 @@ class PasswordResetService(
         val user = appUserRepository.findByIdForUpdate(resetToken.userId)?.takeIf { it.deletedAt == null }
             ?: throw invalidToken()
         // 같은 토큰의 동시 요청은 사용 처리에 성공한 한 요청만 진행
-        if (passwordResetTokenRepository.markUsed(tokenHash, now) == 0) {
+        // 만료는 사용자 잠금을 얻은 뒤의 시각으로 다시 판단 (잠금을 기다리는 사이 만료된 링크로 바뀌지 않게)
+        if (passwordResetTokenRepository.markUsed(tokenHash, OffsetDateTime.now()) == 0) {
             throw invalidToken()
         }
 
