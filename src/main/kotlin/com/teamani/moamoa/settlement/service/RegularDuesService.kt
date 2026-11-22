@@ -97,6 +97,10 @@ class RegularDuesService(
         if (cycleType != null && cycleDay == null) {
             throw ApiException(ErrorCode.VALIDATION_ERROR, "반복 주기를 바꿀 때는 반복 지정일도 함께 보내야 합니다.")
         }
+        // 주기와 지정일을 함께 보내면 기존 회비 없이도 조합을 판단할 수 있어 등록(4-7)과 같이 먼저 확인
+        if (cycleType != null && cycleDay != null) {
+            validateCycleDay(cycleType, cycleDay)
+        }
 
         // 모임 없음·종료 404 → 구성원 아님·ADMIN 아님 403
         memberService.validateAdmin(meetingId, userId)
@@ -109,9 +113,9 @@ class RegularDuesService(
         if (cycleType != null && cycleType != regularDues.cycleType) {
             throw ApiException(ErrorCode.VALIDATION_ERROR, "반복 주기는 바꿀 수 없습니다. 삭제 후 새로 등록해 주세요.")
         }
-        // 지정일만 보내면 기존 반복 주기 기준으로 검증
-        if (cycleDay != null) {
-            validateCycleDay(cycleType ?: regularDues.cycleType, cycleDay)
+        // 지정일만 보내면 기존 반복 주기를 알아야 하므로 회비 조회 뒤 기존 주기 기준으로 검증
+        if (cycleDay != null && cycleType == null) {
+            validateCycleDay(regularDues.cycleType, cycleDay)
         }
         if (amount != null) {
             validateTotalAmount(meetingId, amount)

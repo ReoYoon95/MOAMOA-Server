@@ -20,6 +20,7 @@ import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.anyLong
 import org.mockito.Mockito.`when`
 import org.mockito.Mockito.clearInvocations
+import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.inOrder
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
@@ -407,6 +408,28 @@ class RegularDuesServiceTests : BehaviorSpec({
                     verify(memberService).validateAdmin(1L, memberUserId)
                     verifyNoInteractions(regularDuesRepository, settlementRepository)
                 }
+            }
+        }
+    }
+
+    Given("권한이 없는 사용자가 잘못된 반복 주기·지정일 조합으로 정기 회비 수정을 요청할 때") {
+        val memberUserId = 2L
+        // 앞 테스트에서 이미 예외를 던지도록 stub했으므로 호출 없이 다시 지정
+        doThrow(ApiException(ErrorCode.FORBIDDEN, "모임 관리자만 요청할 수 있습니다."))
+            .`when`(memberService).validateAdmin(1L, memberUserId)
+
+        When("주기와 지정일을 함께 보내면 (WEEKLY / 32)") {
+            val exception = shouldThrow<ApiException> {
+                regularDuesService.updateRegularDues(
+                    1L, memberUserId, 7L,
+                    RegularDuesUpdateRequest(cycleType = Optional.of("WEEKLY"), cycleDay = Optional.of("32"))
+                )
+            }
+
+            Then("명세 오류 순서대로 권한(403)·회비 조회(404)보다 요청 오류(400 VALIDATION_ERROR)가 먼저다") {
+                exception.errorCode shouldBe ErrorCode.VALIDATION_ERROR
+                verify(memberService, never()).validateAdmin(1L, memberUserId)
+                verifyNoInteractions(regularDuesRepository)
             }
         }
     }

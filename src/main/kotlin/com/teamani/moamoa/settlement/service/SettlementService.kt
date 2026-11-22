@@ -404,8 +404,10 @@ class SettlementService(
     }
 
     // 연결 일정은 해당 모임의 일정이어야 함 (아니면 404, 명세 4-1)
+    // 일정 삭제와 같은 일정 잠금으로 확인해, 확인 직후 삭제되어 삭제된 일정 ID가 새 정산에 남지 않게 함
+    // (삭제가 먼저면 여기서 404, 생성이 먼저면 삭제가 새 정산까지 연결 해제)
     private fun validateSchedule(meetingId: Long, scheduleId: Long?) {
-        if (scheduleId != null && scheduleRepository.findByIdAndMeetingId(scheduleId, meetingId) == null) {
+        if (scheduleId != null && scheduleRepository.findByIdAndMeetingIdForUpdate(scheduleId, meetingId) == null) {
             throw ApiException(ErrorCode.NOT_FOUND, "연결할 일정을 찾을 수 없습니다.")
         }
     }
