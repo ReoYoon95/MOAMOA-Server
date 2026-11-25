@@ -8,6 +8,7 @@ import com.teamani.moamoa.member.entity.Member
 import com.teamani.moamoa.member.entity.MemberRole
 import com.teamani.moamoa.member.repository.MemberRepository
 import com.teamani.moamoa.notice.repository.NoticeReadRepository
+import com.teamani.moamoa.schedule.repository.ScheduleResponseRepository
 import com.teamani.moamoa.vote.repository.VoteRepository
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.BehaviorSpec
@@ -30,7 +31,8 @@ class MemberServiceTests : BehaviorSpec({
     val voteRepository: VoteRepository = mock(VoteRepository::class.java)
     val attendanceRepository: AttendanceRepository = mock(AttendanceRepository::class.java)
     val noticeReadRepository: NoticeReadRepository = mock(NoticeReadRepository::class.java)
-    val memberService = MemberService(meetingRepository, memberRepository, voteRepository, attendanceRepository, noticeReadRepository)
+    val scheduleResponseRepository: ScheduleResponseRepository = mock(ScheduleResponseRepository::class.java)
+    val memberService = MemberService(meetingRepository, memberRepository, voteRepository, attendanceRepository, noticeReadRepository, scheduleResponseRepository)
 
     val meetingId = 1L
     val adminUserId = 10L

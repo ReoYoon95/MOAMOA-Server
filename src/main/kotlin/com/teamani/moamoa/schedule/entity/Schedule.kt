@@ -38,6 +38,14 @@ class Schedule(
     @Column(nullable = true)
     var location: String? = null,
 
+    // 준비물 (선택)
+    @Column(nullable = true)
+    var preparation: String? = null,
+
+    // 참석 응답 마감 일시 (없으면 시작 일시까지 응답 가능)
+    @Column(nullable = true)
+    var responseDeadlineAt: OffsetDateTime? = null,
+
     // 일정 상태
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -59,12 +67,19 @@ class Schedule(
         description: Optional<String>?,
         startsAt: OffsetDateTime?,
         endedAt: Optional<OffsetDateTime>?,
-        location: Optional<String>?
+        location: Optional<String>?,
+        preparation: Optional<String>?,
+        responseDeadlineAt: Optional<OffsetDateTime>?
     ) {
         title?.let { this.title = it }
         description?.let { this.description = it.orElse(null) }
         startsAt?.let { this.startsAt = it }
         endedAt?.let { this.endedAt = it.orElse(null) }
         location?.let { this.location = it.orElse(null) }
+        preparation?.let { this.preparation = it.orElse(null) }
+        responseDeadlineAt?.let { this.responseDeadlineAt = it.orElse(null) }
     }
+
+    // 실제로 적용되는 참석 응답 마감 (마감을 정하지 않았으면 시작 일시)
+    fun effectiveResponseDeadline(): OffsetDateTime = responseDeadlineAt ?: startsAt
 }

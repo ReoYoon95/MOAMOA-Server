@@ -13,6 +13,7 @@ import com.teamani.moamoa.schedule.dto.ScheduleSummaryResponse
 import com.teamani.moamoa.schedule.dto.ScheduleUpdateRequest
 import com.teamani.moamoa.schedule.entity.Schedule
 import com.teamani.moamoa.schedule.repository.ScheduleRepository
+import com.teamani.moamoa.schedule.repository.ScheduleResponseRepository
 import com.teamani.moamoa.settlement.repository.SettlementRepository
 import com.teamani.moamoa.vote.repository.VoteRepository
 import org.springframework.stereotype.Service
@@ -27,7 +28,8 @@ class ScheduleService(
     private val attendanceRepository: AttendanceRepository,
     private val voteRepository: VoteRepository,
     private val settlementRepository: SettlementRepository,
-    private val memberService: MemberService
+    private val memberService: MemberService,
+    private val scheduleResponseRepository: ScheduleResponseRepository
 ) {
 
     @Transactional
@@ -35,6 +37,7 @@ class ScheduleService(
         // 요청만으로 판단할 수 있는 오류(400)를 권한 검증보다 먼저 확인 (명세 공통 오류 순서)
         val startsAt = requireNotNull(request.startAt) { "시작 일시는 필수입니다." }
         validatePeriod(startsAt, request.endAt)
+        validateResponseDeadline(startsAt, request.responseDeadlineAt)
 
         // 모임 없음·종료 404 → 구성원 아님·ADMIN 아님 403
         memberService.validateAdmin(meetingId, userId)
@@ -45,7 +48,9 @@ class ScheduleService(
             description = request.description,
             startsAt = startsAt,
             endedAt = request.endAt,
-            location = request.location
+            location = request.location,
+            preparation = request.preparation,
+            responseDeadlineAt = request.responseDeadlineAt
         )
 
         val savedSchedule = scheduleRepository.save(schedule)
@@ -125,6 +130,18 @@ class ScheduleService(
             if (request.endAt == null) schedule.endedAt else request.endAt.orElse(null)
         )
 
+        // 응답 마감도 실제로 바꿀 때만 과거 여부 검증, 수정 결과 기준으로 시작 일시보다 뒤면 안 됨
+        val newResponseDeadlineAt = request.responseDeadlineAt?.orElse(null)
+        if (newResponseDeadlineAt != null && schedule.responseDeadlineAt?.isEqual(newResponseDeadlineAt) != true &&
+            newResponseDeadlineAt.isBefore(OffsetDateTime.now())
+        ) {
+            throw ApiException(ErrorCode.VALIDATION_ERROR, "참석 응답 마감 일시는 현재 시각 이후여야 합니다.")
+        }
+        validateResponseDeadline(
+            newStartsAt ?: schedule.startsAt,
+            if (request.responseDeadlineAt == null) schedule.responseDeadlineAt else newResponseDeadlineAt
+        )
+
         // 변경 감지(Dirty Checking)로 트랜잭션 종료 시 반영
         // 필수 항목의 null 전송은 DTO 검증에서 거부되므로 여기서는 값이 있거나 미전송인 경우만 남음
         schedule.update(
@@ -132,7 +149,9 @@ class ScheduleService(
             request.description,
             newStartsAt,
             request.endAt,
-            request.location
+            request.location,
+            request.preparation,
+            request.responseDeadlineAt
         )
 
         return toDetailResponse(schedule)
@@ -150,6 +169,7 @@ class ScheduleService(
         // 같은 트랜잭션에서 연결 기록을 먼저 정리 (출석·투표는 삭제, 정산은 납부 기록이라 연결만 해제)
         attendanceRepository.deleteAllByScheduleId(scheduleId)
         voteRepository.deleteAllByScheduleId(scheduleId)
+        scheduleResponseRepository.deleteAllByScheduleId(scheduleId)
         settlementRepository.clearScheduleId(scheduleId)
         scheduleRepository.delete(schedule)
 
@@ -163,6 +183,13 @@ class ScheduleService(
         }
     }
 
+    // 생성·수정 공통: 참석 응답 마감이 있으면 시작 일시보다 뒤일 수 없음 (같아도 됨)
+    private fun validateResponseDeadline(startsAt: OffsetDateTime, responseDeadlineAt: OffsetDateTime?) {
+        if (responseDeadlineAt != null && responseDeadlineAt.isAfter(startsAt)) {
+            throw ApiException(ErrorCode.VALIDATION_ERROR, "참석 응답 마감 일시는 시작 일시 이전이어야 합니다.")
+        }
+    }
+
     private fun toDetailResponse(schedule: Schedule): ScheduleDetailResponse =
         ScheduleDetailResponse(
             scheduleId = checkNotNull(schedule.id) { "일정 식별자가 없습니다." },
@@ -171,6 +198,8 @@ class ScheduleService(
             startAt = schedule.startsAt.withOffsetSameInstant(KST),
             endAt = schedule.endedAt?.withOffsetSameInstant(KST),
             location = schedule.location,
+            preparation = schedule.preparation,
+            responseDeadlineAt = schedule.responseDeadlineAt?.withOffsetSameInstant(KST),
             status = schedule.status
         )
 
