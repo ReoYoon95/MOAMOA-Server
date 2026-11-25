@@ -43,5 +43,10 @@ moamoa:
     # 재설정 웹 페이지 주소, 메일 링크는 {web-url}/reset-password?token={토큰}
     web-url: ${PASSWORD_RESET_WEB_URL:https://moamoa-sandbox.aandiclub.com}
 
+springdoc:
+  swagger-ui:
+    # Authorize 토큰을 브라우저에 유지할지 여부 (운영은 기본값 false, 로컬에서만 .env로 true)
+    persist-authorization: ${SWAGGER_PERSIST_AUTHORIZATION:false}
+
 jwt:
   secret: ${JWT_SECRET}
