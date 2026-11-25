@@ -17,5 +17,10 @@ moamoa:
     # 쉼표로 구분, 값이 없으면 허용 Origin 없음 (운영 값은 production Environment variable로 관리)
     allowed-origins: ${CORS_ALLOWED_ORIGINS:}
 
+springdoc:
+  swagger-ui:
+    # Authorize 토큰을 브라우저에 유지할지 여부 (운영은 기본값 false, 로컬에서만 .env로 true)
+    persist-authorization: ${SWAGGER_PERSIST_AUTHORIZATION:false}
+
 jwt:
   secret: ${JWT_SECRET}
