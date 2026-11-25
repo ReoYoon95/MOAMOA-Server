@@ -269,6 +269,79 @@ class RegularDuesBillingIntegrationTests : BehaviorSpec() {
                 }
             }
         }
+
+        Given("매월 10일 09:00 정기 회비를 이번 회차 청구일 뒤에 등록하며 이번 회차도 청구할 때") {
+            val meetingId = savedMeeting(memberCount = 3)
+
+            When("원래 납부 기한(청구일 + 7일)이 아직 안 지났으면 (11/12 10:00 등록)") {
+                val now = kst("2099-11-12T10:00")
+                val duesId = savedDues(meetingId, CycleType.MONTHLY, "10", dueDays = 7, postNotice = true, createdAt = now)
+                val billed = billingService.billCurrentPeriodOnRegistration(regularDuesRepository.findById(duesId).orElseThrow(), now)
+
+                Then("11월 회차 정산이 바로 만들어지고, 기한은 원래 기한, 공지 제목 날짜는 원래 청구일이다") {
+                    billed shouldBe true
+                    val settlement = settlementRepository.findAll().single { it.regularDuesId == duesId }
+                    settlement.billingPeriod shouldBe LocalDate.parse("2099-11-01")
+                    settlement.totalAmount shouldBe 30000
+                    settlement.dueAt.toInstant() shouldBe kst("2099-11-17T23:59").toInstant()
+                    settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(checkNotNull(settlement.id)).size shouldBe 3
+                    noticeRepository.findById(checkNotNull(settlement.noticeId)).orElseThrow().title shouldBe "[회비] 월 회비 (2099년 11월 10일)"
+                }
+
+                Then("등록 후 같은 회차를 스케줄러가 다시 청구하지 않는다") {
+                    billingService.findDueRegularDuesIds(kst("2099-11-12T10:01")) shouldNotContain duesId
+                    settlementsOf(duesId) shouldBe 1
+                }
+            }
+
+            When("원래 납부 기한이 이미 지났으면 (11/20 10:00 등록, 기한 0일)") {
+                val now = kst("2099-11-20T10:00")
+                val duesId = savedDues(meetingId, CycleType.MONTHLY, "10", dueDays = 0, createdAt = now)
+                billingService.billCurrentPeriodOnRegistration(regularDuesRepository.findById(duesId).orElseThrow(), now) shouldBe true
+
+                Then("기한은 오늘부터 dueDays일 23:59다") {
+                    settlementRepository.findAll().single { it.regularDuesId == duesId }.dueAt.toInstant() shouldBe kst("2099-11-20T23:59").toInstant()
+                }
+            }
+
+            When("이번 회차 청구일이 아직 오지 않았으면 (11/05 등록)") {
+                val now = kst("2099-11-05T10:00")
+                val duesId = savedDues(meetingId, CycleType.MONTHLY, "10", createdAt = now)
+
+                Then("바로 만들지 않고 청구일에 스케줄러가 평소대로 청구한다") {
+                    billingService.billCurrentPeriodOnRegistration(regularDuesRepository.findById(duesId).orElseThrow(), now) shouldBe false
+                    settlementsOf(duesId) shouldBe 0
+                    billingService.findDueRegularDuesIds(kst("2099-11-10T09:00")) shouldContain duesId
+                }
+            }
+
+            When("청구일 당일 발송 시각 전이면 (11/10 08:59 등록)") {
+                val now = kst("2099-11-10T08:59")
+                val duesId = savedDues(meetingId, CycleType.MONTHLY, "10", createdAt = now)
+
+                Then("바로 만들지 않는다") {
+                    billingService.billCurrentPeriodOnRegistration(regularDuesRepository.findById(duesId).orElseThrow(), now) shouldBe false
+                    settlementsOf(duesId) shouldBe 0
+                }
+            }
+        }
+
+        Given("매주 수요일 정기 회비를 금요일에 등록하며 이번 회차도 청구할 때") {
+            val meetingId = savedMeeting(memberCount = 2)
+            // 2099-11-13은 금요일, 이번 주 수요일은 11-11
+            val now = kst("2099-11-13T10:00")
+            val duesId = savedDues(meetingId, CycleType.WEEKLY, "WED", dueDays = 7, createdAt = now)
+
+            When("청구하면") {
+                billingService.billCurrentPeriodOnRegistration(regularDuesRepository.findById(duesId).orElseThrow(), now) shouldBe true
+
+                Then("이번 주(월요일 기준) 회차 정산이 이번 주 수요일 기준 기한으로 만들어진다") {
+                    val settlement = settlementRepository.findAll().single { it.regularDuesId == duesId }
+                    settlement.billingPeriod shouldBe LocalDate.parse("2099-11-09")
+                    settlement.dueAt.toInstant() shouldBe kst("2099-11-18T23:59").toInstant()
+                }
+            }
+        }
     }
 
     private fun kst(dateTime: String): OffsetDateTime = OffsetDateTime.parse("$dateTime:00+09:00")
