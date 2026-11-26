@@ -4,8 +4,10 @@ import com.teamani.moamoa.global.auth.JwtTokenProvider
 import com.teamani.moamoa.global.exception.ApiException
 import com.teamani.moamoa.global.exception.ErrorCode
 import com.teamani.moamoa.settlement.dto.PaymentApproveResponse
+import com.teamani.moamoa.settlement.dto.PaymentRefundResponse
 import com.teamani.moamoa.settlement.dto.PaymentRejectResponse
 import com.teamani.moamoa.settlement.dto.PaymentSubmitResponse
+import com.teamani.moamoa.settlement.dto.SettlementCancelResponse
 import com.teamani.moamoa.settlement.dto.SettlementCreateRequest
 import com.teamani.moamoa.settlement.dto.SettlementCreateResponse
 import com.teamani.moamoa.settlement.dto.SettlementListResponse
@@ -156,6 +158,7 @@ class SettlementControllerTests : BehaviorSpec() {
                                     dueAt = OffsetDateTime.parse("2026-10-20T23:59:00+09:00"),
                                     createdAt = OffsetDateTime.parse("2026-10-14T10:00:00+09:00"),
                                     status = SettlementStatus.IN_PROGRESS,
+                                    canceledAt = null,
                                     myAmount = null,
                                     myPaymentStatus = null,
                                     myConfirmedAt = null
@@ -315,6 +318,63 @@ class SettlementControllerTests : BehaviorSpec() {
             }
         }
 
+        Given("정산 취소 요청(POST .../settlements/{settlementId}/cancellation)이 주어졌을 때") {
+            When("요청 본문 없이 호출하면") {
+                Then("사유 없이 취소하고 200 OK와 취소 결과를 반환한다") {
+                    `when`(settlementService.cancelSettlement(1L, 1L, 40L, null)).thenReturn(
+                        SettlementCancelResponse(
+                            settlementId = 40L,
+                            status = SettlementStatus.CANCELED,
+                            canceledAt = OffsetDateTime.parse("2026-10-15T10:00:00+09:00"),
+                            cancelReason = null,
+                            noticeId = 16L
+                        )
+                    )
+
+                    mockMvc.post("/v1/meetings/1/settlements/40/cancellation") {
+                        header(HttpHeaders.AUTHORIZATION, BEARER_TOKEN)
+                    }.andExpect {
+                        status { isOk() }
+                        jsonPath("$.data.status") { value("CANCELED") }
+                        jsonPath("$.data.cancelReason") { value(null as Any?) }
+                        jsonPath("$.data.noticeId") { value(16) }
+                    }
+                }
+            }
+
+            When("255자를 넘는 사유로 호출하면") {
+                Then("400 Bad Request와 VALIDATION_ERROR를 반환하고 Service를 호출하지 않는다") {
+                    mockMvc.post("/v1/meetings/1/settlements/40/cancellation") {
+                        header(HttpHeaders.AUTHORIZATION, BEARER_TOKEN)
+                        contentType = MediaType.APPLICATION_JSON
+                        content = """{ "reason": "${"가".repeat(256)}" }"""
+                    }.andExpect {
+                        status { isBadRequest() }
+                        jsonPath("$.error.code") { value("VALIDATION_ERROR") }
+                    }
+                    verifyNoInteractions(settlementService)
+                }
+            }
+        }
+
+        Given("환불 처리 요청(POST .../payments/{paymentId}/refund)이 주어졌을 때") {
+            When("호출하면") {
+                Then("200 OK와 환불됨 상태를 반환한다") {
+                    `when`(settlementService.refundPayment(1L, 1L, 40L, 81L)).thenReturn(
+                        PaymentRefundResponse(paymentId = 81L, status = PaymentStatus.REFUNDED, refundedAt = OffsetDateTime.parse("2026-10-16T10:00:00+09:00"))
+                    )
+
+                    mockMvc.post("/v1/meetings/1/settlements/40/payments/81/refund") {
+                        header(HttpHeaders.AUTHORIZATION, BEARER_TOKEN)
+                    }.andExpect {
+                        status { isOk() }
+                        jsonPath("$.data.status") { value("REFUNDED") }
+                        jsonPath("$.data.refundedAt") { exists() }
+                    }
+                }
+            }
+        }
+
         Given("액세스 토큰 없이 정산 API를 요청할 때") {
             listOf<Pair<String, () -> ResultActionsDsl>>(
                 "정산 생성" to { mockMvc.post("/v1/meetings/1/settlements") { contentType = MediaType.APPLICATION_JSON; content = "{}" } },
@@ -322,7 +382,9 @@ class SettlementControllerTests : BehaviorSpec() {
                 "정산 상세" to { mockMvc.get("/v1/meetings/1/settlements/40") },
                 "납부 완료 제출" to { mockMvc.post("/v1/meetings/1/settlements/40/payments/me/submissions") },
                 "납부 승인" to { mockMvc.post("/v1/meetings/1/settlements/40/payments/81/approval") },
-                "납부 반려" to { mockMvc.post("/v1/meetings/1/settlements/40/payments/81/rejection") }
+                "납부 반려" to { mockMvc.post("/v1/meetings/1/settlements/40/payments/81/rejection") },
+                "정산 취소" to { mockMvc.post("/v1/meetings/1/settlements/40/cancellation") },
+                "환불 처리" to { mockMvc.post("/v1/meetings/1/settlements/40/payments/81/refund") }
             ).forEach { (api, call) ->
                 When("$api API를 호출하면") {
                     Then("401 Unauthorized와 UNAUTHORIZED 공통 에러 응답을 반환하고 Service를 호출하지 않는다") {
