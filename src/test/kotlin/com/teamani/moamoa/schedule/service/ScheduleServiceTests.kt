@@ -9,6 +9,7 @@ import com.teamani.moamoa.schedule.dto.ScheduleUpdateRequest
 import com.teamani.moamoa.schedule.entity.Schedule
 import com.teamani.moamoa.schedule.entity.ScheduleStatus
 import com.teamani.moamoa.schedule.repository.ScheduleRepository
+import com.teamani.moamoa.schedule.repository.ScheduleResponseRepository
 import com.teamani.moamoa.settlement.repository.SettlementRepository
 import com.teamani.moamoa.vote.repository.VoteRepository
 import io.kotest.assertions.throwables.shouldThrow
@@ -36,8 +37,9 @@ class ScheduleServiceTests : BehaviorSpec({
     val voteRepository: VoteRepository = mock(VoteRepository::class.java)
     val settlementRepository: SettlementRepository = mock(SettlementRepository::class.java)
     val memberService: MemberService = mock(MemberService::class.java)
+    val scheduleResponseRepository: ScheduleResponseRepository = mock(ScheduleResponseRepository::class.java)
     val scheduleService =
-        ScheduleService(scheduleRepository, attendanceRepository, voteRepository, settlementRepository, memberService)
+        ScheduleService(scheduleRepository, attendanceRepository, voteRepository, settlementRepository, memberService, scheduleResponseRepository)
 
     afterEach { clearInvocations(scheduleRepository, attendanceRepository, voteRepository, settlementRepository, memberService) }
 

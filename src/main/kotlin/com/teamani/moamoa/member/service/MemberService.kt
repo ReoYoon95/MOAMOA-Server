@@ -11,6 +11,7 @@ import com.teamani.moamoa.member.entity.Member
 import com.teamani.moamoa.member.entity.MemberRole
 import com.teamani.moamoa.member.repository.MemberRepository
 import com.teamani.moamoa.notice.repository.NoticeReadRepository
+import com.teamani.moamoa.schedule.repository.ScheduleResponseRepository
 import com.teamani.moamoa.user.entity.ProfileColor
 import com.teamani.moamoa.user.repository.AppUserRepository
 import com.teamani.moamoa.vote.repository.VoteRepository
@@ -25,7 +26,8 @@ class MemberService(
     private val voteRepository: VoteRepository,
     private val attendanceRepository: AttendanceRepository,
     private val noticeReadRepository: NoticeReadRepository,
-    private val appUserRepository: AppUserRepository
+    private val appUserRepository: AppUserRepository,
+    private val scheduleResponseRepository: ScheduleResponseRepository
 ) {
 
     // 모임 구성원 권한 검증 (모임 없음 404 → 구성원 아님 403), 다른 도메인에서도 재사용
@@ -87,11 +89,12 @@ class MemberService(
             throw ApiException(ErrorCode.UNPROCESSABLE_ENTITY, "모임 관리자는 탈퇴할 수 없습니다.")
         }
 
-        // 구성원 삭제 전 같은 트랜잭션에서 투표 응답, 출석 기록, 공지 읽음 기록 먼저 삭제
+        // 구성원 삭제 전 같은 트랜잭션에서 투표 응답, 출석 기록, 공지 읽음 기록, 일정 참석 응답 먼저 삭제
         val memberId = checkNotNull(member.id) { "구성원 식별자가 없습니다." }
         voteRepository.deleteAllByMemberId(memberId)
         attendanceRepository.deleteAllByMemberId(memberId)
         noticeReadRepository.deleteAllByMemberId(memberId)
+        scheduleResponseRepository.deleteAllByMemberId(memberId)
         memberRepository.delete(member)
 
         return MemberLeaveResponse(meetingId = meetingId)

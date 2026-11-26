@@ -8,6 +8,7 @@ import com.teamani.moamoa.member.entity.Member
 import com.teamani.moamoa.member.entity.MemberRole
 import com.teamani.moamoa.member.repository.MemberRepository
 import com.teamani.moamoa.notice.repository.NoticeReadRepository
+import com.teamani.moamoa.schedule.repository.ScheduleResponseRepository
 import com.teamani.moamoa.user.entity.AppUser
 import com.teamani.moamoa.user.entity.ProfileColor
 import com.teamani.moamoa.user.repository.AppUserRepository
@@ -34,7 +35,16 @@ class MemberServiceTests : BehaviorSpec({
     val attendanceRepository: AttendanceRepository = mock(AttendanceRepository::class.java)
     val noticeReadRepository: NoticeReadRepository = mock(NoticeReadRepository::class.java)
     val appUserRepository: AppUserRepository = mock(AppUserRepository::class.java)
-    val memberService = MemberService(meetingRepository, memberRepository, voteRepository, attendanceRepository, noticeReadRepository, appUserRepository)
+    val scheduleResponseRepository: ScheduleResponseRepository = mock(ScheduleResponseRepository::class.java)
+    val memberService = MemberService(
+        meetingRepository,
+        memberRepository,
+        voteRepository,
+        attendanceRepository,
+        noticeReadRepository,
+        appUserRepository,
+        scheduleResponseRepository
+    )
 
     val meetingId = 1L
     val adminUserId = 10L
