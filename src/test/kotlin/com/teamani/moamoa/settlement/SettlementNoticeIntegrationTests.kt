@@ -97,6 +97,23 @@ class SettlementNoticeIntegrationTests : BehaviorSpec() {
             }
         }
 
+        Given("공백만 있는 사유로 정산을 취소할 때") {
+            val group = savedGroup()
+            val created = settlementService.createSettlement(group.meetingId, group.adminUserId, request(group.memberIds, postNotice = true))
+            val oldNoticeId = created.noticeId.shouldNotBeNull()
+
+            When("취소하면") {
+                val response = settlementService.cancelSettlement(group.meetingId, group.adminUserId, created.settlementId, "   ")
+
+                Then("사유 없음으로 저장·응답하고, 공지에도 사유를 쓰지 않는다") {
+                    response.cancelReason shouldBe null
+                    settlementRepository.findById(created.settlementId).orElseThrow().cancelReason shouldBe null
+                    noticeRepository.findById(oldNoticeId).orElseThrow().content
+                        .startsWith("⚠ 이 정산은 취소되었습니다.\n──── 기존 내용 ────") shouldBe true
+                }
+            }
+        }
+
         Given("관리자가 안내 공지 제목을 수정하는 도중에 정산을 취소할 때") {
             val group = savedGroup()
             val created = settlementService.createSettlement(group.meetingId, group.adminUserId, request(group.memberIds, postNotice = true))

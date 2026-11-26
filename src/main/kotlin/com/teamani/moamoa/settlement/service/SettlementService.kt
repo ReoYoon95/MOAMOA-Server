@@ -295,16 +295,18 @@ class SettlementService(
             throw ApiException(ErrorCode.UNPROCESSABLE_ENTITY, "확인 대기 중인 납부를 먼저 승인하거나 반려해 주세요.")
         }
 
+        // 공백만 있는 사유는 사유 없음으로 보고, 정리한 값을 저장·공지·응답에 함께 사용
+        val cancelReason = reason?.trim()?.takeIf { it.isNotEmpty() }
         val canceledAt = OffsetDateTime.now()
-        settlement.cancel(reason, canceledAt)
+        settlement.cancel(cancelReason, canceledAt)
 
         // 공지 처리에 실패하면 같은 트랜잭션이라 취소도 함께 롤백됨
         settlement.noticeId?.let { noticeId ->
-            noticeService.markCanceled(meetingId, noticeId, canceledBanner(reason))
+            noticeService.markCanceled(meetingId, noticeId, canceledBanner(cancelReason))
             settlement.noticeId = noticeService.createNoticeByMember(
                 meetingId,
                 memberId,
-                cancelNotice(settlement, reason, hasPaidMember = payments.any { it.status == PaymentStatus.PAID })
+                cancelNotice(settlement, cancelReason, hasPaidMember = payments.any { it.status == PaymentStatus.PAID })
             ).noticeId
         }
 
