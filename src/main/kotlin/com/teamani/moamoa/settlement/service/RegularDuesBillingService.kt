@@ -95,16 +95,47 @@ class RegularDuesBillingService(
             return null
         }
 
+        return createPeriodSettlement(regularDues, memberIds, billingDate, period, dueAt(billingDate, regularDues.dueDays))
+    }
+
+    // 등록 시 이번 회차 청구 (4-7 billCurrentPeriod): 이번 회차 청구일·발송 시각이 이미 지났으면 바로 회차 정산 생성
+    // 아직 안 지났으면 만들지 않고 스케줄러가 평소대로 청구. 지났으면 스케줄러는 "등록 전에 발송 시각이 지난 회차"로 건너뛰어 중복 없음
+    // 등록(4-7)과 같은 트랜잭션이라 공지 생성이 실패하면 등록도 함께 롤백. 총액 상한은 등록에서 이미 확인
+    @Transactional
+    fun billCurrentPeriodOnRegistration(regularDues: RegularDues, now: OffsetDateTime): Boolean {
+        val nowKst = now.withOffsetSameInstant(KST)
+        val billingDate = currentPeriodBillingDate(regularDues, nowKst.toLocalDate())
+        if (OffsetDateTime.of(billingDate, regularDues.sendTime, KST).isAfter(nowKst)) {
+            return false
+        }
+
+        val memberIds = memberRepository.findAllByMeetingIdOrderByIdAsc(regularDues.meetingId).mapNotNull { it.id }
+        // 원래 기한(청구일 + dueDays일 23:59)이 이미 지났으면 오늘부터 dueDays일 (다음 청구일을 넘어도 상한 없음)
+        val originalDueAt = dueAt(billingDate, regularDues.dueDays)
+        val dueAt = if (originalDueAt.isBefore(nowKst)) dueAt(nowKst.toLocalDate(), regularDues.dueDays) else originalDueAt
+        createPeriodSettlement(regularDues, memberIds, billingDate, billingPeriod(regularDues, billingDate), dueAt)
+        return true
+    }
+
+    // 회차 정산·납부 항목(1인당 금액 고정)·안내 공지 생성 (자동 청구와 등록 시 이번 회차 청구 공통)
+    private fun createPeriodSettlement(
+        regularDues: RegularDues,
+        memberIds: List<Long>,
+        billingDate: LocalDate,
+        period: LocalDate,
+        dueAt: OffsetDateTime
+    ): Long {
+        val regularDuesId = checkNotNull(regularDues.id) { "정기 회비 식별자가 없습니다." }
         val settlement = settlementRepository.save(
             Settlement(
                 meetingId = regularDues.meetingId,
                 regularDuesId = regularDuesId,
                 title = regularDues.title,
-                totalAmount = totalAmount.toInt(),
+                totalAmount = Math.multiplyExact(regularDues.amount, memberIds.size),
                 bankName = regularDues.bankName,
                 accountNumber = regularDues.accountNumber,
                 accountHolder = regularDues.accountHolder,
-                dueAt = OffsetDateTime.of(billingDate.plusDays(regularDues.dueDays.toLong()), DUE_TIME, KST),
+                dueAt = dueAt,
                 billingPeriod = period
             )
         )
@@ -113,7 +144,7 @@ class RegularDuesBillingService(
             memberIds.map { SettlementMember(settlementId = settlementId, memberId = it, amount = regularDues.amount) }
         )
 
-        // 공지 작성자는 정기 회비를 등록한 관리자
+        // 공지 작성자는 정기 회비를 등록한 관리자, 제목 날짜는 원래 청구일
         if (regularDues.postNotice) {
             val notice = noticeService.createNoticeByMember(
                 regularDues.meetingId,
@@ -127,6 +158,10 @@ class RegularDuesBillingService(
 
         return settlementId
     }
+
+    // 납부 기한: 기준일 + dueDays일 23:59(KST)
+    private fun dueAt(date: LocalDate, dueDays: Int): OffsetDateTime =
+        OffsetDateTime.of(date.plusDays(dueDays.toLong()), DUE_TIME, KST)
 
     // 청구일이고 발송 시각이 지났으며 등록 전에 발송 시각이 지난 회차가 아님 (대상 선정과 청구 직전에 같은 기준으로 확인)
     private fun isDueAt(regularDues: RegularDues, nowKst: OffsetDateTime): Boolean {
@@ -166,6 +201,16 @@ internal fun isBillingDay(regularDues: RegularDues, date: LocalDate): Boolean =
             if (regularDues.cycleDay == "LAST") date.dayOfMonth == date.lengthOfMonth()
             else date.dayOfMonth == regularDues.cycleDay.toInt()
         CycleType.WEEKLY -> date.dayOfWeek == weeklyDay(regularDues.cycleDay)
+    }
+
+// 이번 회차의 청구일 (MONTHLY: 이번 달 지정일·말일, WEEKLY: 이번 주(월~일)의 지정 요일). 오늘보다 뒤일 수 있음
+internal fun currentPeriodBillingDate(regularDues: RegularDues, today: LocalDate): LocalDate =
+    when (regularDues.cycleType) {
+        CycleType.MONTHLY ->
+            if (regularDues.cycleDay == "LAST") today.withDayOfMonth(today.lengthOfMonth())
+            else today.withDayOfMonth(regularDues.cycleDay.toInt())
+        CycleType.WEEKLY ->
+            today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).with(TemporalAdjusters.nextOrSame(weeklyDay(regularDues.cycleDay)))
     }
 
 // 회차 기준일 (MONTHLY: 해당 월 1일, WEEKLY: 해당 주 월요일). 지정일·요일을 바꿔도 같은 기간이면 같은 값

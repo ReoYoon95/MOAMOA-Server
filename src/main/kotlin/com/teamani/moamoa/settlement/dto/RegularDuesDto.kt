@@ -50,13 +50,18 @@ data class RegularDuesCreateRequest(
     @field:Size(max = 20, message = "예금주는 20자 이하여야 합니다.")
     val accountHolder: String?,
 
-    val postNotice: Boolean? = null
+    val postNotice: Boolean? = null,
+
+    // 이번 회차 청구일·발송 시각이 이미 지났으면 등록과 함께 이번 회차 정산 생성 (보내지 않으면 false)
+    val billCurrentPeriod: Boolean? = null
 )
 
 data class RegularDuesCreateResponse(
     val regularDuesId: Long,
     val title: String,
-    val isActive: Boolean
+    val isActive: Boolean,
+    // 등록과 함께 이번 회차 정산을 만들었으면 true
+    val currentPeriodBilled: Boolean
 )
 
 data class RegularDuesListResponse(

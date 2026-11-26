@@ -80,7 +80,7 @@ class RegularDuesControllerTests : BehaviorSpec() {
             When("API를 호출하면") {
                 Then("201 Created와 공통 응답 형식으로 등록 요약을 반환한다") {
                     `when`(regularDuesService.createRegularDues(1L, 1L, request)).thenReturn(
-                        RegularDuesCreateResponse(regularDuesId = 7L, title = "월 회비", isActive = true)
+                        RegularDuesCreateResponse(regularDuesId = 7L, title = "월 회비", isActive = true, currentPeriodBilled = false)
                     )
 
                     mockMvc.post("/v1/meetings/1/regular-dues") {
@@ -128,7 +128,7 @@ class RegularDuesControllerTests : BehaviorSpec() {
             When("API를 호출하면") {
                 Then("검증을 통과해 201 Created를 반환한다") {
                     `when`(regularDuesService.createRegularDues(1L, 1L, request)).thenReturn(
-                        RegularDuesCreateResponse(regularDuesId = 8L, title = "월 회비", isActive = true)
+                        RegularDuesCreateResponse(regularDuesId = 8L, title = "월 회비", isActive = true, currentPeriodBilled = false)
                     )
 
                     mockMvc.post("/v1/meetings/1/regular-dues") {
@@ -170,7 +170,7 @@ class RegularDuesControllerTests : BehaviorSpec() {
             When("API를 호출하면") {
                 Then("검증을 통과해 201 Created를 반환한다") {
                     `when`(regularDuesService.createRegularDues(1L, 1L, request)).thenReturn(
-                        RegularDuesCreateResponse(regularDuesId = 9L, title = "월 회비", isActive = true)
+                        RegularDuesCreateResponse(regularDuesId = 9L, title = "월 회비", isActive = true, currentPeriodBilled = false)
                     )
 
                     mockMvc.post("/v1/meetings/1/regular-dues") {

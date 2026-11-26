@@ -17,6 +17,7 @@ import com.teamani.moamoa.settlement.repository.SettlementRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalTime
+import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Optional
 
@@ -25,7 +26,8 @@ class RegularDuesService(
     private val regularDuesRepository: RegularDuesRepository,
     private val settlementRepository: SettlementRepository,
     private val memberRepository: MemberRepository,
-    private val memberService: MemberService
+    private val memberService: MemberService,
+    private val regularDuesBillingService: RegularDuesBillingService
 ) {
 
     @Transactional
@@ -56,11 +58,15 @@ class RegularDuesService(
                 postNotice = request.postNotice ?: false
             )
         )
+        // 등록 시각 기준으로 판단해, 스케줄러의 "등록 전에 발송 시각이 지난 회차는 건너뜀" 판단과 어긋나지 않게 함
+        val currentPeriodBilled = request.billCurrentPeriod == true &&
+            regularDuesBillingService.billCurrentPeriodOnRegistration(regularDues, regularDues.createdAt ?: OffsetDateTime.now())
 
         return RegularDuesCreateResponse(
             regularDuesId = checkNotNull(regularDues.id) { "정기 회비 식별자가 생성되지 않았습니다." },
             title = regularDues.title,
-            isActive = regularDues.isActive
+            isActive = regularDues.isActive,
+            currentPeriodBilled = currentPeriodBilled
         )
     }
 

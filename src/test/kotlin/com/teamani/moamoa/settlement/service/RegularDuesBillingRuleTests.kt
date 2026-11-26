@@ -97,4 +97,22 @@ class RegularDuesBillingRuleTests : BehaviorSpec({
             }
         }
     }
+
+    Given("이번 회차 청구일을 계산할 때") {
+        Then("매월 지정일은 이번 달 지정일이다 (오늘보다 뒤일 수 있음)") {
+            currentPeriodBillingDate(regularDues(CycleType.MONTHLY, "10"), LocalDate.parse("2026-10-25")) shouldBe LocalDate.parse("2026-10-10")
+            currentPeriodBillingDate(regularDues(CycleType.MONTHLY, "10"), LocalDate.parse("2026-10-05")) shouldBe LocalDate.parse("2026-10-10")
+        }
+
+        Then("매월 말일(LAST)은 이번 달 마지막 날이다") {
+            currentPeriodBillingDate(regularDues(CycleType.MONTHLY, "LAST"), LocalDate.parse("2026-02-10")) shouldBe LocalDate.parse("2026-02-28")
+        }
+
+        Then("매주는 이번 주(월~일)의 지정 요일이다") {
+            // 2026-10-30은 금요일, 이번 주 수요일은 10-28
+            currentPeriodBillingDate(regularDues(CycleType.WEEKLY, "WED"), LocalDate.parse("2026-10-30")) shouldBe LocalDate.parse("2026-10-28")
+            // 2026-10-26은 월요일, 이번 주 일요일은 11-01
+            currentPeriodBillingDate(regularDues(CycleType.WEEKLY, "SUN"), LocalDate.parse("2026-10-26")) shouldBe LocalDate.parse("2026-11-01")
+        }
+    }
 })
