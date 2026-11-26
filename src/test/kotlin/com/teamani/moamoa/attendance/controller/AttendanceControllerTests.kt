@@ -12,6 +12,7 @@ import com.teamani.moamoa.attendance.service.AttendanceService
 import com.teamani.moamoa.global.auth.JwtTokenProvider
 import com.teamani.moamoa.global.exception.ApiException
 import com.teamani.moamoa.global.exception.ErrorCode
+import com.teamani.moamoa.user.entity.ProfileColor
 import io.kotest.core.spec.style.BehaviorSpec
 import io.kotest.extensions.spring.SpringExtension
 import org.mockito.Mockito.`when`
@@ -262,14 +263,14 @@ class AttendanceControllerTests : BehaviorSpec() {
 
         Given("출석 현황 조회 요청(GET /v1/meetings/{meetingId}/schedules/{scheduleId}/attendances)이 주어졌을 때") {
             When("모임 구성원이 요청하면") {
-                Then("200과 구성원 전체의 출석 상태를 반환하고, 기록이 없는 구성원은 UNCHECKED, userName은 null로 응답한다") {
+                Then("200과 구성원 전체의 출석 상태를 반환하고, 기록이 없는 구성원은 UNCHECKED, 이름·프로필 색과 함께 응답한다") {
                     `when`(attendanceService.getAttendances(1L, USER_ID, 5L)).thenReturn(
                         AttendanceListResponse(
                             scheduleId = 5L,
                             attendances = listOf(
-                                AttendanceMemberResponse(100L, null, AttendanceViewStatus.PRESENT),
-                                AttendanceMemberResponse(200L, null, AttendanceViewStatus.LATE),
-                                AttendanceMemberResponse(300L, null, AttendanceViewStatus.UNCHECKED),
+                                AttendanceMemberResponse(100L, "김모아", ProfileColor.BLUE, AttendanceViewStatus.PRESENT),
+                                AttendanceMemberResponse(200L, "이모아", ProfileColor.GRAY, AttendanceViewStatus.LATE),
+                                AttendanceMemberResponse(300L, "박모아", ProfileColor.LIGHT_BLUE, AttendanceViewStatus.UNCHECKED),
                             )
                         )
                     )
@@ -281,7 +282,8 @@ class AttendanceControllerTests : BehaviorSpec() {
                         jsonPath("$.success") { value(true) }
                         jsonPath("$.data.scheduleId") { value(5) }
                         jsonPath("$.data.attendances[0].memberId") { value(100) }
-                        jsonPath("$.data.attendances[0].userName") { value(null as Any?) }
+                        jsonPath("$.data.attendances[0].userName") { value("김모아") }
+                        jsonPath("$.data.attendances[0].profileColor") { value("BLUE") }
                         jsonPath("$.data.attendances[0].status") { value("PRESENT") }
                         jsonPath("$.data.attendances[1].status") { value("LATE") }
                         jsonPath("$.data.attendances[2].memberId") { value(300) }

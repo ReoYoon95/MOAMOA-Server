@@ -12,6 +12,9 @@ import com.teamani.moamoa.member.repository.MemberRepository
 import com.teamani.moamoa.schedule.entity.Schedule
 import com.teamani.moamoa.schedule.entity.ScheduleStatus
 import com.teamani.moamoa.schedule.repository.ScheduleRepository
+import com.teamani.moamoa.user.entity.AppUser
+import com.teamani.moamoa.user.entity.ProfileColor
+import com.teamani.moamoa.user.repository.AppUserRepository
 import io.kotest.core.spec.style.BehaviorSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.collections.shouldContainExactly
@@ -33,6 +36,7 @@ import org.springframework.test.web.servlet.delete
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.patch
 import java.time.OffsetDateTime
+import java.util.UUID
 
 // 실제 트랜잭션·DB 제약을 거친 출석 처리·조회 흐름과 모임 탈퇴 연동 검증 (Controller·Service 테스트는 mock 사용)
 @SpringBootTest
@@ -63,6 +67,9 @@ class AttendanceIntegrationTests : BehaviorSpec() {
     @MockitoSpyBean
     lateinit var attendanceRepository: AttendanceRepository
 
+    @Autowired
+    lateinit var appUserRepository: AppUserRepository
+
     private val startsAt = OffsetDateTime.parse("2026-11-01T19:00:00+09:00")
 
     private fun saveMeeting(inviteCode: String): Long =
@@ -75,6 +82,19 @@ class AttendanceIntegrationTests : BehaviorSpec() {
         checkNotNull(
             scheduleRepository.save(
                 Schedule(meetingId = meetingId, title = "11월 정기 모임", startsAt = startsAt, status = status)
+            ).id
+        )
+
+    private fun saveUser(name: String, profileColor: ProfileColor): Long =
+        checkNotNull(
+            appUserRepository.save(
+                AppUser(
+                    name = name,
+                    email = "attendance-${UUID.randomUUID()}@moamoa.test",
+                    password = "password",
+                    profileColor = profileColor,
+                    termsAgreedAt = OffsetDateTime.now()
+                )
             ).id
         )
 
@@ -121,7 +141,9 @@ class AttendanceIntegrationTests : BehaviorSpec() {
                         jsonPath("$.data.attendances[0].status") { value("UNCHECKED") }
                         jsonPath("$.data.attendances[1].memberId") { value(firstMemberId.toInt()) }
                         jsonPath("$.data.attendances[1].status") { value("PRESENT") }
-                        jsonPath("$.data.attendances[1].userName") { value(null as Any?) }
+                        // 사용자 행이 없는 구성원은 탈퇴한 사용자로 표시
+                        jsonPath("$.data.attendances[1].userName") { value("탈퇴한 사용자") }
+                        jsonPath("$.data.attendances[1].profileColor") { value("LIGHT_BLUE") }
                         jsonPath("$.data.attendances[2].memberId") { value(secondMemberId.toInt()) }
                         jsonPath("$.data.attendances[2].status") { value("UNCHECKED") }
                     }
@@ -340,6 +362,29 @@ class AttendanceIntegrationTests : BehaviorSpec() {
                     }.andExpect { status { isOk() } }
                     attendancesOf(scheduleId).map { it.memberId to it.status } shouldContainExactly
                         listOf(memberId to AttendanceStatus.PRESENT)
+                }
+            }
+        }
+
+        Given("가입한 사용자들이 구성원인 모임의 일정이 있을 때") {
+            When("출석 현황을 조회하면") {
+                Then("각 구성원의 실제 이름과 프로필 색이 함께 나온다") {
+                    val adminUserId = saveUser("김모아", ProfileColor.BLUE)
+                    val memberUserId = saveUser("이모아", ProfileColor.DARK)
+                    val meetingId = saveMeeting("ATTD0010")
+                    saveMember(meetingId, adminUserId, MemberRole.ADMIN)
+                    saveMember(meetingId, memberUserId, MemberRole.MEMBER)
+                    val scheduleId = saveSchedule(meetingId)
+
+                    mockMvc.get("/v1/meetings/$meetingId/schedules/$scheduleId/attendances") {
+                        header(HttpHeaders.AUTHORIZATION, bearer(memberUserId))
+                    }.andExpect {
+                        status { isOk() }
+                        jsonPath("$.data.attendances[0].userName") { value("김모아") }
+                        jsonPath("$.data.attendances[0].profileColor") { value("BLUE") }
+                        jsonPath("$.data.attendances[1].userName") { value("이모아") }
+                        jsonPath("$.data.attendances[1].profileColor") { value("DARK") }
+                    }
                 }
             }
         }

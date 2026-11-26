@@ -13,6 +13,8 @@ import com.teamani.moamoa.schedule.entity.Schedule
 import com.teamani.moamoa.schedule.entity.ScheduleStatus
 import com.teamani.moamoa.schedule.repository.ScheduleRepository
 import com.teamani.moamoa.schedule.repository.ScheduleResponseRepository
+import com.teamani.moamoa.user.entity.AppUser
+import com.teamani.moamoa.user.entity.ProfileColor
 import com.teamani.moamoa.user.repository.AppUserRepository
 import com.teamani.moamoa.vote.dto.MyVoteSubmitRequest
 import com.teamani.moamoa.vote.dto.VoteConfirmRequest
@@ -49,16 +51,17 @@ class VoteServiceTests : BehaviorSpec({
     val memberRepository: MemberRepository = mock(MemberRepository::class.java)
     val scheduleRepository: ScheduleRepository = mock(ScheduleRepository::class.java)
     val voteRepository: VoteRepository = mock(VoteRepository::class.java)
+    val appUserRepository: AppUserRepository = mock(AppUserRepository::class.java)
     val memberService = MemberService(
         meetingRepository,
         memberRepository,
         voteRepository,
         mock(AttendanceRepository::class.java),
         mock(NoticeReadRepository::class.java),
-        mock(AppUserRepository::class.java),
+        appUserRepository,
         mock(ScheduleResponseRepository::class.java)
     )
-    val voteService = VoteService(memberService, memberRepository, scheduleRepository, voteRepository)
+    val voteService = VoteService(memberService, memberRepository, scheduleRepository, voteRepository, appUserRepository)
 
     val meetingId = 1L
     val scheduleId = 5L
@@ -88,6 +91,15 @@ class VoteServiceTests : BehaviorSpec({
     )
 
     // DB에서 UTC로 읽힌 일시도 같은 후보로 처리되는지 확인하기 위해 UTC 표기로 생성
+    fun appUser(id: Long, name: String, color: ProfileColor) = AppUser(
+        name = name,
+        email = "user$id@moamoa.test",
+        password = "password",
+        profileColor = color,
+        termsAgreedAt = OffsetDateTime.now(),
+        id = id
+    )
+
     fun vote(
         memberId: Long,
         meetingTime: OffsetDateTime,
@@ -132,7 +144,7 @@ class VoteServiceTests : BehaviorSpec({
     }
 
     beforeTest {
-        reset(meetingRepository, memberRepository, scheduleRepository, voteRepository)
+        reset(meetingRepository, memberRepository, scheduleRepository, voteRepository, appUserRepository)
         `when`(meetingRepository.existsByIdAndEndedAtIsNull(meetingId)).thenReturn(true)
         listOf(admin, member, quietMember, lateMember).forEach {
             `when`(memberRepository.findByMeetingIdAndUserId(meetingId, it.userId)).thenReturn(it)
@@ -472,6 +484,14 @@ class VoteServiceTests : BehaviorSpec({
                 )
                 `when`(memberRepository.findAllByMeetingIdOrderByIdAsc(meetingId))
                     .thenReturn(listOf(admin, member, quietMember, lateMember))
+                // 사용자 정보가 없는 구성원(quietMember)은 탈퇴한 사용자로 표시
+                `when`(appUserRepository.findAllById(listOf(adminUserId, memberUserId, quietUserId, lateUserId))).thenReturn(
+                    listOf(
+                        appUser(adminUserId, "김모아", ProfileColor.BLUE),
+                        appUser(memberUserId, "이모아", ProfileColor.GRAY),
+                        appUser(lateUserId, "박모아", ProfileColor.DARK)
+                    )
+                )
 
                 val response = voteService.getVoteParticipation(meetingId, adminUserId, scheduleId)
 
@@ -483,7 +503,9 @@ class VoteServiceTests : BehaviorSpec({
                 response.members[1].submittedAt shouldBe memberSubmittedAt.withOffsetSameInstant(kst)
                 response.members[2].submittedAt.shouldBeNull()
                 response.members[3].submittedAt shouldBe lateSubmittedAt.withOffsetSameInstant(kst)
-                response.members.map { it.userName }.distinct() shouldContainExactly listOf(null)
+                response.members.map { it.userName } shouldContainExactly listOf("김모아", "이모아", "탈퇴한 사용자", "박모아")
+                response.members.map { it.profileColor } shouldContainExactly
+                    listOf(ProfileColor.BLUE, ProfileColor.GRAY, ProfileColor.LIGHT_BLUE, ProfileColor.DARK)
             }
         }
         When("MEMBER가 요청하면") {
