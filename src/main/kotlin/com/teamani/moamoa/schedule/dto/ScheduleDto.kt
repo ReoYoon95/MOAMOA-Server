@@ -24,7 +24,14 @@ data class ScheduleCreateRequest(
     val endAt: OffsetDateTime? = null,
 
     @field:Size(max = 255, message = "장소는 255자 이하여야 합니다.")
-    val location: String? = null
+    val location: String? = null,
+
+    @field:Size(max = 255, message = "준비물은 255자 이하여야 합니다.")
+    val preparation: String? = null,
+
+    // 시작 일시 이전이거나 같은지는 Service에서 검증
+    @field:FutureOrPresent(message = "참석 응답 마감 일시는 현재 시각 이후여야 합니다.")
+    val responseDeadlineAt: OffsetDateTime? = null
 )
 
 data class ScheduleCreateResponse(
@@ -71,7 +78,15 @@ data class ScheduleUpdateRequest(
     val location: Optional<
         @Size(max = 255, message = "장소는 255자 이하여야 합니다.")
         String
-    >? = null
+    >? = null,
+
+    val preparation: Optional<
+        @Size(max = 255, message = "준비물은 255자 이하여야 합니다.")
+        String
+    >? = null,
+
+    // null 전송 시 마감을 비움(시작 일시까지 응답). 과거 여부는 기존 값과 달라졌을 때만 Service에서 검증
+    val responseDeadlineAt: Optional<OffsetDateTime>? = null
 )
 
 data class ScheduleDeleteResponse(
@@ -85,5 +100,8 @@ data class ScheduleDetailResponse(
     val startAt: OffsetDateTime,
     val endAt: OffsetDateTime?,
     val location: String?,
+    val preparation: String?,
+    // 참석 응답 마감 일시 (정하지 않았으면 null, 이때는 시작 일시까지 응답 가능)
+    val responseDeadlineAt: OffsetDateTime?,
     val status: ScheduleStatus
 )

@@ -252,6 +252,8 @@ class ScheduleControllerTests : BehaviorSpec({
             startAt = OffsetDateTime.parse("2026-10-11T07:00:00+09:00"),
             endAt = OffsetDateTime.parse("2026-10-11T09:00:00+09:00"),
             location = "반포 한강공원",
+            preparation = null,
+            responseDeadlineAt = null,
             status = ScheduleStatus.SCHEDULED
         )
 
@@ -323,6 +325,8 @@ class ScheduleControllerTests : BehaviorSpec({
             startAt = OffsetDateTime.parse("2099-10-11T08:00:00+09:00"),
             endAt = OffsetDateTime.parse("2099-10-11T10:00:00+09:00"),
             location = "반포 한강공원",
+            preparation = null,
+            responseDeadlineAt = null,
             status = ScheduleStatus.SCHEDULED
         )
 
@@ -432,6 +436,8 @@ class ScheduleControllerTests : BehaviorSpec({
             startAt = OffsetDateTime.parse("2099-10-11T07:00:00+09:00"),
             endAt = null,
             location = "반포 한강공원",
+            preparation = null,
+            responseDeadlineAt = null,
             status = ScheduleStatus.SCHEDULED
         )
 

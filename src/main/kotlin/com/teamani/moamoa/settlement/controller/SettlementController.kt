@@ -3,9 +3,12 @@ package com.teamani.moamoa.settlement.controller
 import com.teamani.moamoa.global.auth.CurrentUserId
 import com.teamani.moamoa.global.response.CommonResponse
 import com.teamani.moamoa.settlement.dto.PaymentApproveResponse
+import com.teamani.moamoa.settlement.dto.PaymentRefundResponse
 import com.teamani.moamoa.settlement.dto.PaymentRejectRequest
 import com.teamani.moamoa.settlement.dto.PaymentRejectResponse
 import com.teamani.moamoa.settlement.dto.PaymentSubmitResponse
+import com.teamani.moamoa.settlement.dto.SettlementCancelRequest
+import com.teamani.moamoa.settlement.dto.SettlementCancelResponse
 import com.teamani.moamoa.settlement.dto.SettlementCreateRequest
 import com.teamani.moamoa.settlement.dto.SettlementCreateResponse
 import com.teamani.moamoa.settlement.dto.SettlementDetailResponse
@@ -92,5 +95,30 @@ class SettlementController(
         val response = settlementService.rejectPayment(meetingId, currentUserId, settlementId, paymentId, request?.reason)
 
         return ResponseEntity.ok(CommonResponse(data = response))
+    }
+
+    // 취소 사유는 선택 입력이라 요청 본문 없이도 취소 가능
+    @PostMapping("/{settlementId}/cancellation")
+    fun cancelSettlement(
+        @CurrentUserId currentUserId: Long,
+        @PathVariable meetingId: Long,
+        @PathVariable settlementId: Long,
+        @Valid @RequestBody(required = false) request: SettlementCancelRequest?
+    ): ResponseEntity<CommonResponse<SettlementCancelResponse>> {
+        val response = settlementService.cancelSettlement(meetingId, currentUserId, settlementId, request?.reason)
+
+        return ResponseEntity.ok(CommonResponse(data = response))
+    }
+
+    @PostMapping("/{settlementId}/payments/{paymentId}/refund")
+    fun refundPayment(
+        @CurrentUserId currentUserId: Long,
+        @PathVariable meetingId: Long,
+        @PathVariable settlementId: Long,
+        @PathVariable paymentId: Long
+    ): ResponseEntity<CommonResponse<PaymentRefundResponse>> {
+        return ResponseEntity.ok(
+            CommonResponse(data = settlementService.refundPayment(meetingId, currentUserId, settlementId, paymentId))
+        )
     }
 }
