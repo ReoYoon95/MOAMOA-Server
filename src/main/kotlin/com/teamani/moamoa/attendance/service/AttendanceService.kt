@@ -16,6 +16,8 @@ import com.teamani.moamoa.member.service.MemberService
 import com.teamani.moamoa.schedule.entity.Schedule
 import com.teamani.moamoa.schedule.entity.ScheduleStatus
 import com.teamani.moamoa.schedule.repository.ScheduleRepository
+import com.teamani.moamoa.user.entity.ProfileColor
+import com.teamani.moamoa.user.repository.AppUserRepository
 import org.hibernate.exception.ConstraintViolationException
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
@@ -27,7 +29,8 @@ class AttendanceService(
     private val memberService: MemberService,
     private val memberRepository: MemberRepository,
     private val scheduleRepository: ScheduleRepository,
-    private val attendanceRepository: AttendanceRepository
+    private val attendanceRepository: AttendanceRepository,
+    private val appUserRepository: AppUserRepository
 ) {
 
     @Transactional
@@ -107,11 +110,16 @@ class AttendanceService(
             .associate { it.memberId to it.status }
 
         // 참석 응답과 관계없이 조회 시점의 구성원 전체 대상 (1-7과 같은 memberId 오름차순)
-        val attendances = memberRepository.findAllByMeetingIdOrderByIdAsc(meetingId).map { member ->
+        val members = memberRepository.findAllByMeetingIdOrderByIdAsc(meetingId)
+        // 구성원마다 사용자를 조회하지 않도록 한 번에 조회
+        val usersById = appUserRepository.findAllById(members.map { it.userId }).associateBy { it.id }
+        val attendances = members.map { member ->
             val memberId = checkNotNull(member.id) { "구성원 식별자가 없습니다." }
+            val user = usersById[member.userId]
             AttendanceMemberResponse(
                 memberId = memberId,
-                userName = null,
+                userName = user?.name ?: WITHDRAWN_USER_NAME,
+                profileColor = user?.profileColor ?: ProfileColor.LIGHT_BLUE,
                 status = AttendanceViewStatus.from(statusByMemberId[memberId])
             )
         }
@@ -138,5 +146,7 @@ class AttendanceService(
     companion object {
         // 출석 처리가 가능한 일정 상태 (CANCELED·VOTING은 422)
         private val CHECKABLE_SCHEDULE_STATUSES = setOf(ScheduleStatus.SCHEDULED, ScheduleStatus.CONFIRMED)
+
+        private const val WITHDRAWN_USER_NAME = "탈퇴한 사용자"
     }
 }

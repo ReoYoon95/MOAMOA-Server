@@ -4,6 +4,7 @@ import com.teamani.moamoa.global.auth.JwtTokenProvider
 import com.teamani.moamoa.global.exception.ApiException
 import com.teamani.moamoa.global.exception.ErrorCode
 import com.teamani.moamoa.schedule.entity.ScheduleStatus
+import com.teamani.moamoa.user.entity.ProfileColor
 import com.teamani.moamoa.vote.dto.MyVoteSubmitRequest
 import com.teamani.moamoa.vote.dto.MyVoteSubmitResponse
 import com.teamani.moamoa.vote.dto.VoteCandidateResponse
@@ -361,14 +362,14 @@ class VoteControllerTests : BehaviorSpec() {
 
         Given("투표 참여 현황 조회 요청(GET /v1/meetings/{meetingId}/schedules/{scheduleId}/vote-responses)이 주어졌을 때") {
             When("ADMIN이 요청하면") {
-                Then("200과 구성원별 응답 여부를 반환하고 userName과 미응답자의 submittedAt은 null로 응답한다") {
+                Then("200과 구성원별 이름·프로필 색·응답 여부를 반환하고 미응답자의 submittedAt은 null로 응답한다") {
                     `when`(voteService.getVoteParticipation(1L, USER_ID, 5L)).thenReturn(
                         VoteParticipationResponse(
                             memberCount = 2L,
                             respondedCount = 1L,
                             members = listOf(
-                                VoteMemberResponse(100L, null, false, null),
-                                VoteMemberResponse(200L, null, true, submittedAt),
+                                VoteMemberResponse(100L, "김모아", ProfileColor.BLUE, false, null),
+                                VoteMemberResponse(200L, "이모아", ProfileColor.GRAY, true, submittedAt),
                             )
                         )
                     )
@@ -380,7 +381,8 @@ class VoteControllerTests : BehaviorSpec() {
                         jsonPath("$.data.memberCount") { value(2) }
                         jsonPath("$.data.respondedCount") { value(1) }
                         jsonPath("$.data.members[0].memberId") { value(100) }
-                        jsonPath("$.data.members[0].userName") { value(null as Any?) }
+                        jsonPath("$.data.members[0].userName") { value("김모아") }
+                        jsonPath("$.data.members[0].profileColor") { value("BLUE") }
                         jsonPath("$.data.members[0].responded") { value(false) }
                         jsonPath("$.data.members[0].submittedAt") { value(null as Any?) }
                         jsonPath("$.data.members[1].responded") { value(true) }

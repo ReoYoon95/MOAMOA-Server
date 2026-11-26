@@ -17,6 +17,9 @@ import com.teamani.moamoa.notice.repository.NoticeReadRepository
 import com.teamani.moamoa.schedule.entity.Schedule
 import com.teamani.moamoa.schedule.entity.ScheduleStatus
 import com.teamani.moamoa.schedule.repository.ScheduleRepository
+import com.teamani.moamoa.user.entity.AppUser
+import com.teamani.moamoa.user.entity.ProfileColor
+import com.teamani.moamoa.user.repository.AppUserRepository
 import com.teamani.moamoa.vote.repository.VoteRepository
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.BehaviorSpec
@@ -48,7 +51,8 @@ class AttendanceServiceTests : BehaviorSpec({
     val scheduleRepository: ScheduleRepository = mock(ScheduleRepository::class.java)
     val attendanceRepository: AttendanceRepository = mock(AttendanceRepository::class.java)
     val memberService = MemberService(meetingRepository, memberRepository, mock(VoteRepository::class.java), attendanceRepository, mock(NoticeReadRepository::class.java))
-    val attendanceService = AttendanceService(memberService, memberRepository, scheduleRepository, attendanceRepository)
+    val appUserRepository: AppUserRepository = mock(AppUserRepository::class.java)
+    val attendanceService = AttendanceService(memberService, memberRepository, scheduleRepository, attendanceRepository, appUserRepository)
 
     val meetingId = 1L
     val scheduleId = 5L
@@ -70,6 +74,15 @@ class AttendanceServiceTests : BehaviorSpec({
         startsAt: OffsetDateTime = OffsetDateTime.now().plusDays(1)
     ) = Schedule(meetingId = meetingId, title = "10월 정기 모임", startsAt = startsAt, status = status, id = scheduleId)
 
+    fun appUser(id: Long, name: String, color: ProfileColor) = AppUser(
+        name = name,
+        email = "user$id@moamoa.test",
+        password = "password",
+        profileColor = color,
+        termsAgreedAt = OffsetDateTime.now(),
+        id = id
+    )
+
     fun attendance(memberId: Long, status: AttendanceStatus) =
         Attendance(memberId = memberId, scheduleId = scheduleId, status = status, createdAt = firstCheckedAt, id = memberId + 1000L)
 
@@ -90,7 +103,7 @@ class AttendanceServiceTests : BehaviorSpec({
     }
 
     beforeTest {
-        reset(meetingRepository, memberRepository, scheduleRepository, attendanceRepository)
+        reset(meetingRepository, memberRepository, scheduleRepository, attendanceRepository, appUserRepository)
         `when`(meetingRepository.existsByIdAndEndedAtIsNull(meetingId)).thenReturn(true)
         listOf(admin, member, quietMember).forEach {
             `when`(memberRepository.findByMeetingIdAndUserId(meetingId, it.userId)).thenReturn(it)
@@ -313,6 +326,10 @@ class AttendanceServiceTests : BehaviorSpec({
                     schedule(),
                     listOf(attendance(200L, AttendanceStatus.LATE), attendance(100L, AttendanceStatus.PRESENT))
                 )
+                // 사용자 정보가 없는 구성원(quietMember)은 탈퇴한 사용자로 표시
+                `when`(appUserRepository.findAllById(listOf(adminUserId, memberUserId, quietUserId))).thenReturn(
+                    listOf(appUser(adminUserId, "김모아", ProfileColor.BLUE), appUser(memberUserId, "이모아", ProfileColor.GRAY))
+                )
 
                 val response = attendanceService.getAttendances(meetingId, memberUserId, scheduleId)
 
@@ -320,7 +337,9 @@ class AttendanceServiceTests : BehaviorSpec({
                 response.attendances.map { it.memberId } shouldContainExactly listOf(100L, 200L, 300L)
                 response.attendances.map { it.status } shouldContainExactly
                     listOf(AttendanceViewStatus.PRESENT, AttendanceViewStatus.LATE, AttendanceViewStatus.UNCHECKED)
-                response.attendances.map { it.userName } shouldContainExactly listOf(null, null, null)
+                response.attendances.map { it.userName } shouldContainExactly listOf("김모아", "이모아", "탈퇴한 사용자")
+                response.attendances.map { it.profileColor } shouldContainExactly
+                    listOf(ProfileColor.BLUE, ProfileColor.GRAY, ProfileColor.LIGHT_BLUE)
             }
         }
         When("결석으로 체크된 구성원이 있으면") {
