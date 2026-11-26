@@ -67,7 +67,15 @@ cp .env.example .env
 - Swagger UI: [http://localhost:8080/swagger-ui/index.html](http://localhost:8080/swagger-ui/index.html)
 - OpenAPI JSON: [http://localhost:8080/v3/api-docs](http://localhost:8080/v3/api-docs)
 
-현재 비즈니스 API가 없어 Swagger의 API 목록이 비어 있어도 정상입니다. 종료는 실행한 터미널에서 `Ctrl+C`를 누릅니다.
+자물쇠 표시가 있는 API는 액세스 토큰이 필요합니다. Swagger UI에서 다음 순서로 호출합니다.
+
+1. 회원가입(`POST /v1/users`) 또는 로그인(`POST /v1/auth/login`)을 호출해 응답의 `accessToken` 값을 복사합니다.
+2. 오른쪽 위 **Authorize**를 눌러 `bearerAuth`에 토큰 값만 입력합니다. `Bearer ` 접두어는 Swagger UI가 붙입니다.
+3. 자물쇠 표시가 있는 API를 Try it out으로 호출합니다. 토큰이 만료(1시간)되면 다시 로그인해 입력합니다.
+
+`.env`에 `SWAGGER_PERSIST_AUTHORIZATION=true`를 두면 입력한 토큰이 새로고침 후에도 유지됩니다. 토큰이 브라우저에 저장되므로 로컬 개발에서만 사용하고, 운영 Swagger는 기본값(`false`)으로 페이지를 닫으면 토큰이 남지 않습니다.
+
+종료는 실행한 터미널에서 `Ctrl+C`를 누릅니다.
 
 Windows에서는 `./gradlew` 대신 `.\gradlew.bat`을 사용합니다.
 
@@ -100,6 +108,11 @@ Copy-Item .env.example .env
 | `DB_PASSWORD` | DB 비밀번호 | 실제 DB 비밀번호 |
 | `JWT_SECRET` | JWT 서명 키 (32바이트 이상) | 임의의 긴 문자열 |
 | `CORS_ALLOWED_ORIGINS` | CORS 허용 웹 프론트엔드 Origin (쉼표로 구분, 선택) | `http://localhost:3000` |
+| `MAIL_HOST` · `MAIL_PORT` | 비밀번호 재설정 메일 SMTP 서버 (선택) | `smtp.gmail.com` · `587` |
+| `MAIL_USERNAME` · `MAIL_PASSWORD` | SMTP 계정과 비밀번호 (Gmail은 앱 비밀번호, 선택) | 팀 공용 Gmail 주소 · 앱 비밀번호 |
+| `MAIL_FROM` | 보내는 사람 주소 (Gmail은 계정 주소와 같게, 선택) | 팀 공용 Gmail 주소 |
+| `PASSWORD_RESET_WEB_URL` | 재설정 링크가 열 웹 주소 (기본값 sandbox 웹) | `https://moamoa-sandbox.aandiclub.com` |
+| `SWAGGER_PERSIST_AUTHORIZATION` | Swagger UI에 입력한 액세스 토큰을 브라우저에 유지 (선택, 기본값 `false`, 로컬 개발 전용) | `true` |
 
 `application.yml`은 실행 작업 디렉터리의 `.env`를 Java Properties 형식으로 읽습니다. 저장소 루트에서 실행하고, IntelliJ 실행 설정의 Working directory도 저장소 루트로 지정합니다.
 
@@ -112,6 +125,7 @@ Copy-Item .env.example .env
 - 운영 서버의 `JWT_SECRET`은 GitHub `production` Environment secret `PROD_JWT_SECRET`으로 관리하며, 배포 워크플로가 `JWT_SECRET`으로 전달합니다.
 - `CORS_ALLOWED_ORIGINS`는 브라우저에서 다른 도메인의 웹 프론트엔드가 API를 호출할 때만 필요합니다. 비워 두면 허용 Origin이 없어 브라우저의 교차 출처 요청은 거부되고, 앱과 Swagger UI는 영향이 없습니다.
 - 운영 서버의 `CORS_ALLOWED_ORIGINS`는 GitHub `production` Environment variable `PROD_CORS_ALLOWED_ORIGINS`로 관리하며, 값이 없으면 배포가 중단됩니다.
+- 메일 변수는 비밀번호 재설정(7-5)에만 쓰입니다. 비워 두어도 서버는 시작되며, 재설정 메일 발송만 실패해 로그에 남습니다. `MAIL_PASSWORD`는 Git에 커밋하지 않습니다.
 - `./gradlew test`는 테스트 전용 H2 설정을 사용하므로 `.env`와 PostgreSQL 서버 없이 실행할 수 있습니다.
 
 ### 2. 작업 흐름
