@@ -287,9 +287,18 @@ class RegularDuesBillingIntegrationTests : BehaviorSpec() {
                     settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(checkNotNull(settlement.id)).size shouldBe 3
                     noticeRepository.findById(checkNotNull(settlement.noticeId)).orElseThrow().title shouldBe "[회비] 월 회비 (2099년 11월 10일)"
                 }
+            }
 
-                Then("등록 후 같은 회차를 스케줄러가 다시 청구하지 않는다") {
-                    billingService.findDueRegularDuesIds(kst("2099-11-12T10:01")) shouldNotContain duesId
+            When("청구일 당일 발송 시각 뒤에 등록하면 (11/10 10:00)") {
+                val now = kst("2099-11-10T10:00")
+                val duesId = savedDues(meetingId, CycleType.MONTHLY, "10", createdAt = now)
+                val billed = billingService.billCurrentPeriodOnRegistration(regularDuesRepository.findById(duesId).orElseThrow(), now)
+
+                Then("11월 회차가 바로 만들어지고, 같은 날 스케줄러는 대상으로 고르지도, 다시 청구하지도 않는다") {
+                    billed shouldBe true
+                    settlementsOf(duesId) shouldBe 1
+                    billingService.findDueRegularDuesIds(kst("2099-11-10T10:01")) shouldNotContain duesId
+                    billingService.bill(duesId, kst("2099-11-10T10:01")) shouldBe null
                     settlementsOf(duesId) shouldBe 1
                 }
             }
