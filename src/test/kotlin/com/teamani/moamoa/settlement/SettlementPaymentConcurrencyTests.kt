@@ -7,6 +7,9 @@ import com.teamani.moamoa.meeting.repository.MeetingRepository
 import com.teamani.moamoa.member.entity.Member
 import com.teamani.moamoa.member.entity.MemberRole
 import com.teamani.moamoa.member.repository.MemberRepository
+import com.teamani.moamoa.notice.repository.NoticeRepository
+import com.teamani.moamoa.notice.service.NoticeService
+import com.teamani.moamoa.settlement.dto.SettlementCreateRequest
 import com.teamani.moamoa.settlement.entity.PaymentStatus
 import com.teamani.moamoa.settlement.entity.Settlement
 import com.teamani.moamoa.settlement.entity.SettlementMember
@@ -18,6 +21,7 @@ import io.kotest.core.spec.style.BehaviorSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -51,7 +55,98 @@ class SettlementPaymentConcurrencyTests : BehaviorSpec() {
     @Autowired
     lateinit var memberRepository: MemberRepository
 
+    @Autowired
+    lateinit var noticeService: NoticeService
+
+    @Autowired
+    lateinit var noticeRepository: NoticeRepository
+
     init {
+        Given("취소된 정산이 여러 개 있을 때") {
+            val meetingId = savedMeeting()
+            val adminMemberId = checkNotNull(memberRepository.findByMeetingIdAndUserId(meetingId, ADMIN_USER_ID)?.id)
+            val canceledIds = List(10) {
+                val settlementId = savedSettlement(meetingId)
+                settlementRepository.save(settlementRepository.findById(settlementId).orElseThrow().apply { cancel(null, OffsetDateTime.now()) })
+                settlementId
+            }
+
+            When("같은 취소 정산을 대체하는 정산을 동시에 두 개씩 만들면") {
+                val results = canceledIds.map { canceledId ->
+                    canceledId to runConcurrently(
+                        List(2) { { settlementService.createSettlement(meetingId, ADMIN_USER_ID, replacingRequest(canceledId, adminMemberId)) } }
+                    )
+                }
+
+                Then("각각 하나만 생성되고 나머지는 422 UNPROCESSABLE_ENTITY이며, 대체 정산은 하나만 연결된다") {
+                    results.forEach { (canceledId, errors) ->
+                        errors.count { it == null } shouldBe 1
+                        errors.filterNotNull().map { (it as ApiException).errorCode } shouldContainExactly listOf(ErrorCode.UNPROCESSABLE_ENTITY)
+                        settlementRepository.findByReplacesSettlementId(canceledId).shouldNotBeNull()
+                    }
+                }
+            }
+        }
+
+        Given("안내 공지가 연결된 정산이 여러 개 있을 때") {
+            val meetingId = savedMeeting()
+            val adminMemberId = checkNotNull(memberRepository.findByMeetingIdAndUserId(meetingId, ADMIN_USER_ID)?.id)
+            val created = List(10) {
+                settlementService.createSettlement(meetingId, ADMIN_USER_ID, replacingRequest(null, adminMemberId).copy(postNotice = true))
+            }
+
+            When("정산 취소와 그 안내 공지 삭제를 동시에 요청하면") {
+                val results = created.flatMap { settlement ->
+                    val noticeId = checkNotNull(settlement.noticeId)
+                    runConcurrently(
+                        listOf(
+                            { settlementService.cancelSettlement(meetingId, ADMIN_USER_ID, settlement.settlementId, null) },
+                            { noticeService.deleteNotice(meetingId, noticeId, ADMIN_USER_ID) }
+                        )
+                    )
+                }
+
+                Then("교착 없이 모두 성공하고, 정산은 취소되며 남은 공지 연결은 실제 공지를 가리킨다") {
+                    results.filterNotNull() shouldBe emptyList()
+                    created.forEach { settlement ->
+                        val saved = settlementRepository.findById(settlement.settlementId).orElseThrow()
+                        saved.status shouldBe SettlementStatus.CANCELED
+                        // 삭제가 먼저면 연결 없음, 취소가 먼저면 새 취소 공지에 연결
+                        saved.noticeId?.let { noticeRepository.existsById(it) shouldBe true }
+                    }
+                }
+            }
+        }
+
+        Given("미납 납부 항목 하나가 있는 정산이 여러 개 있을 때") {
+            val meetingId = savedMeeting()
+            val memberId = checkNotNull(memberRepository.save(Member(meetingId = meetingId, userId = CANCEL_MEMBER_USER_ID, role = MemberRole.MEMBER)).id)
+            val rounds = List(10) {
+                val settlementId = savedSettlement(meetingId)
+                settlementId to savedPayment(settlementId, memberId, PaymentStatus.UNPAID)
+            }
+
+            When("정산 취소와 납부 완료 제출을 동시에 요청하면") {
+                rounds.forEach { (settlementId, _) ->
+                    runConcurrently(
+                        listOf(
+                            { settlementService.cancelSettlement(meetingId, ADMIN_USER_ID, settlementId, null) },
+                            { settlementService.submitPayment(meetingId, CANCEL_MEMBER_USER_ID, settlementId) }
+                        )
+                    )
+                }
+
+                Then("취소됐는데 확인 대기인 납부가 남는 경우는 없다 (먼저 끝난 요청 결과를 보고 나머지가 422)") {
+                    rounds.forEach { (settlementId, paymentId) ->
+                        val canceled = settlementStatus(settlementId) == SettlementStatus.CANCELED
+                        val pending = paymentStatus(paymentId) == PaymentStatus.PENDING
+                        (canceled && pending) shouldBe false
+                        (canceled || pending) shouldBe true
+                    }
+                }
+            }
+        }
+
         Given("대상자 2명의 납부 항목이 모두 확인 대기(PENDING)인 정산이 여러 개 있을 때") {
             // 승인·반려·제출은 권한을 확인하므로 실제 모임과 관리자 구성원을 저장
             val meetingId = savedMeeting()
@@ -230,8 +325,20 @@ class SettlementPaymentConcurrencyTests : BehaviorSpec() {
     private fun settlementStatus(settlementId: Long): SettlementStatus =
         settlementRepository.findById(settlementId).orElseThrow().status
 
+    private fun replacingRequest(replacesSettlementId: Long?, memberId: Long) = SettlementCreateRequest(
+        title = "재청구",
+        replacesSettlementId = replacesSettlementId,
+        totalAmount = 10000,
+        memberIds = listOf(memberId),
+        bankName = "국민은행",
+        accountNumber = "123456789012",
+        accountHolder = "김모아",
+        dueAt = OffsetDateTime.parse("2099-10-20T23:59:00+09:00")
+    )
+
     companion object {
         private const val ADMIN_USER_ID = 9401L
         private const val MEMBER_USER_ID = 9402L
+        private const val CANCEL_MEMBER_USER_ID = 9403L
     }
 }

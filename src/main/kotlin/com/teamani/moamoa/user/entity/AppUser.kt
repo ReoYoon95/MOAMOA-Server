@@ -10,6 +10,7 @@ import jakarta.persistence.Id
 import jakarta.persistence.Table
 import jakarta.persistence.UniqueConstraint
 import java.time.OffsetDateTime
+import java.util.Optional
 
 @Entity
 @Table(
@@ -64,6 +65,13 @@ class AppUser(
     // 비밀번호 재설정: 암호화한 새 비밀번호로 교체
     fun changePassword(encodedPassword: String) {
         password = encodedPassword
+    }
+
+    // 내 정보 부분 수정: null은 유지, 휴대폰 번호는 Optional.empty면 비움
+    fun updateProfile(name: String?, phone: Optional<String>?, profileColor: ProfileColor?) {
+        name?.let { this.name = it }
+        phone?.let { this.phone = it.orElse(null) }
+        profileColor?.let { this.profileColor = it }
     }
 
     companion object {

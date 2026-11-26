@@ -15,6 +15,7 @@ import com.teamani.moamoa.member.repository.MemberRepository
 import com.teamani.moamoa.member.service.MemberService
 import com.teamani.moamoa.notice.repository.NoticeReadRepository
 import com.teamani.moamoa.schedule.repository.ScheduleResponseRepository
+import com.teamani.moamoa.user.repository.AppUserRepository
 import com.teamani.moamoa.vote.repository.VoteRepository
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.BehaviorSpec
@@ -49,6 +50,7 @@ class MeetingServiceTests : BehaviorSpec({
         mock(VoteRepository::class.java),
         mock(AttendanceRepository::class.java),
         mock(NoticeReadRepository::class.java),
+        mock(AppUserRepository::class.java),
         mock(ScheduleResponseRepository::class.java)
     )
     val meetingService = MeetingService(meetingRepository, memberRepository, memberService)

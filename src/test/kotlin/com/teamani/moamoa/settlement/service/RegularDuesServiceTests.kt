@@ -35,12 +35,13 @@ class RegularDuesServiceTests : BehaviorSpec({
     val settlementRepository: SettlementRepository = mock(SettlementRepository::class.java)
     val memberRepository: MemberRepository = mock(MemberRepository::class.java)
     val memberService: MemberService = mock(MemberService::class.java)
-    val regularDuesService = RegularDuesService(regularDuesRepository, settlementRepository, memberRepository, memberService)
+    val billingService: RegularDuesBillingService = mock(RegularDuesBillingService::class.java)
+    val regularDuesService = RegularDuesService(regularDuesRepository, settlementRepository, memberRepository, memberService, billingService)
 
     // 기본: 사용자 1은 모임 1의 관리자(구성원 1)
     `when`(memberService.validateAdmin(1L, 1L)).thenReturn(Member(id = 1L, meetingId = 1L, userId = 1L, role = MemberRole.ADMIN))
 
-    afterEach { clearInvocations(regularDuesRepository, settlementRepository, memberService) }
+    afterEach { clearInvocations(regularDuesRepository, settlementRepository, memberService, billingService) }
 
     fun regularDues(
         id: Long = 7L,
@@ -92,6 +93,25 @@ class RegularDuesServiceTests : BehaviorSpec({
 
                 response.regularDuesId shouldBe 7L
                 response.isActive shouldBe true
+                response.currentPeriodBilled shouldBe false
+                verifyNoInteractions(billingService)
+            }
+        }
+    }
+
+    Given("이번 회차 청구 옵션을 켠 등록 요청이 주어졌을 때") {
+        val saved = regularDues()
+        `when`(regularDuesRepository.save(any(RegularDues::class.java))).thenReturn(saved)
+
+        listOf(true, false).forEach { billed ->
+            When("이번 회차 청구 결과가 $billed 이면") {
+                `when`(billingService.billCurrentPeriodOnRegistration(saved, checkNotNull(saved.createdAt))).thenReturn(billed)
+                val response = regularDuesService.createRegularDues(1L, 1L, createRequest().copy(billCurrentPeriod = true))
+
+                Then("등록한 정기 회비와 등록 시각으로 이번 회차 청구를 요청하고 결과를 응답에 담는다") {
+                    verify(billingService).billCurrentPeriodOnRegistration(saved, checkNotNull(saved.createdAt))
+                    response.currentPeriodBilled shouldBe billed
+                }
             }
         }
     }

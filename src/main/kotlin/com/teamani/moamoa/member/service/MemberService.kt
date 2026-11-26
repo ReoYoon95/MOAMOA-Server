@@ -12,6 +12,8 @@ import com.teamani.moamoa.member.entity.MemberRole
 import com.teamani.moamoa.member.repository.MemberRepository
 import com.teamani.moamoa.notice.repository.NoticeReadRepository
 import com.teamani.moamoa.schedule.repository.ScheduleResponseRepository
+import com.teamani.moamoa.user.entity.ProfileColor
+import com.teamani.moamoa.user.repository.AppUserRepository
 import com.teamani.moamoa.vote.repository.VoteRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -24,6 +26,7 @@ class MemberService(
     private val voteRepository: VoteRepository,
     private val attendanceRepository: AttendanceRepository,
     private val noticeReadRepository: NoticeReadRepository,
+    private val appUserRepository: AppUserRepository,
     private val scheduleResponseRepository: ScheduleResponseRepository
 ) {
 
@@ -61,14 +64,19 @@ class MemberService(
     fun getMembers(meetingId: Long, userId: Long): MemberListResponse {
         validateMember(meetingId, userId)
 
-        val members = memberRepository.findAllByMeetingIdOrderByIdAsc(meetingId).map {
+        val members = memberRepository.findAllByMeetingIdOrderByIdAsc(meetingId)
+        // 구성원마다 사용자를 조회하지 않도록 한 번에 조회
+        val usersById = appUserRepository.findAllById(members.map { it.userId }).associateBy { it.id }
+        val responses = members.map {
+            val user = usersById[it.userId]
             MemberSummaryResponse(
                 memberId = checkNotNull(it.id) { "구성원 식별자가 없습니다." },
-                userName = null,
+                userName = user?.name ?: WITHDRAWN_USER_NAME,
+                profileColor = user?.profileColor ?: ProfileColor.LIGHT_BLUE,
                 role = it.role
             )
         }
-        return MemberListResponse(members = members)
+        return MemberListResponse(members = responses)
     }
 
     @Transactional
@@ -94,5 +102,8 @@ class MemberService(
 
     companion object {
         const val MEETING_NOT_FOUND_MESSAGE = "모임을 찾을 수 없습니다."
+
+        // 사용자 정보가 없는 구성원 표시 이름 (명세 공통 "탈퇴한 사용자")
+        private const val WITHDRAWN_USER_NAME = "탈퇴한 사용자"
     }
 }
