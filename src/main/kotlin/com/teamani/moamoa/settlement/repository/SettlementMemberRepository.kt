@@ -2,6 +2,7 @@ package com.teamani.moamoa.settlement.repository
 
 import com.teamani.moamoa.settlement.entity.SettlementMember
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
 
 interface SettlementMemberRepository : JpaRepository<SettlementMember, Long> {
 
@@ -9,6 +10,10 @@ interface SettlementMemberRepository : JpaRepository<SettlementMember, Long> {
     fun findAllBySettlementIdIn(settlementIds: Collection<Long>): List<SettlementMember>
 
     fun findAllBySettlementIdOrderByIdAsc(settlementId: Long): List<SettlementMember>
+
+    // 정산 수정(4-11)에서 새로 추가되는 대상만 고르기 위한 현재 대상 구성원 ID (정산 잠금 전이라 엔티티를 불러오지 않음)
+    @Query("select sm.memberId from SettlementMember sm where sm.settlementId = :settlementId")
+    fun findMemberIdsBySettlementId(settlementId: Long): List<Long>
 
     // 본인 납부 항목 (없으면 정산 대상이 아님)
     fun findBySettlementIdAndMemberId(settlementId: Long, memberId: Long): SettlementMember?

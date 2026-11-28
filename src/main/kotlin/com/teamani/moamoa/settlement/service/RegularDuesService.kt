@@ -10,6 +10,7 @@ import com.teamani.moamoa.settlement.dto.RegularDuesDeleteResponse
 import com.teamani.moamoa.settlement.dto.RegularDuesListResponse
 import com.teamani.moamoa.settlement.dto.RegularDuesResponse
 import com.teamani.moamoa.settlement.dto.RegularDuesUpdateRequest
+import com.teamani.moamoa.settlement.dto.RegularDuesUpdateResponse
 import com.teamani.moamoa.settlement.entity.CycleType
 import com.teamani.moamoa.settlement.entity.RegularDues
 import com.teamani.moamoa.settlement.repository.RegularDuesRepository
@@ -27,7 +28,8 @@ class RegularDuesService(
     private val settlementRepository: SettlementRepository,
     private val memberRepository: MemberRepository,
     private val memberService: MemberService,
-    private val regularDuesBillingService: RegularDuesBillingService
+    private val regularDuesBillingService: RegularDuesBillingService,
+    private val settlementService: SettlementService
 ) {
 
     @Transactional
@@ -86,7 +88,7 @@ class RegularDuesService(
         userId: Long,
         regularDuesId: Long,
         request: RegularDuesUpdateRequest
-    ): RegularDuesResponse {
+    ): RegularDuesUpdateResponse {
         // 요청만으로 판단할 수 있는 오류(400)를 권한 검증보다 먼저 확인 (명세 공통 오류 순서)
         // 모든 항목이 필수라 null로 보내면 비우지 않고 400
         val title = request.title.valueOrKeep("회비명")
@@ -108,8 +110,8 @@ class RegularDuesService(
             validateCycleDay(cycleType, cycleDay)
         }
 
-        // 모임 없음·종료 404 → 구성원 아님·ADMIN 아님 403
-        memberService.validateAdmin(meetingId, userId)
+        // 모임 없음·종료 404 → 구성원 아님·ADMIN 아님 403, 이번 회차 반영 시 새 공지 작성자는 수정한 관리자
+        val editorMemberId = checkNotNull(memberService.validateAdmin(meetingId, userId).id) { "구성원 식별자가 없습니다." }
 
         // 자동 청구와 같은 정기 회비 잠금으로 조회해, 청구 중이면 끝난 뒤 수정 (청구는 바뀐 설정으로 다시 확인)
         val regularDues = regularDuesRepository.findByIdAndMeetingIdForUpdate(regularDuesId, meetingId)
@@ -142,7 +144,29 @@ class RegularDuesService(
             isActive = isActive
         )
 
-        return toResponse(regularDues)
+        // 이번 회차 반영 (정기 회비 잠금을 잡은 상태라 잠금 순서: 정기 회비 → 공지 → 정산)
+        val currentSettlementApplied = if (request.applyToCurrentSettlement == true) {
+            settlementService.applyRegularDuesToCurrentSettlement(regularDues, editorMemberId, OffsetDateTime.now())
+        } else {
+            null
+        }
+
+        val response = toResponse(regularDues)
+        return RegularDuesUpdateResponse(
+            regularDuesId = response.regularDuesId,
+            title = response.title,
+            amount = response.amount,
+            cycleType = response.cycleType,
+            cycleDay = response.cycleDay,
+            sendTime = response.sendTime,
+            dueDays = response.dueDays,
+            bankName = response.bankName,
+            accountNumber = response.accountNumber,
+            accountHolder = response.accountHolder,
+            isActive = response.isActive,
+            postNotice = response.postNotice,
+            currentSettlementApplied = currentSettlementApplied
+        )
     }
 
     @Transactional

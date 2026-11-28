@@ -25,7 +25,7 @@ class Settlement(
 
     // 연결 일정 ID (일정 없이 만든 정산은 NULL)
     @Column(nullable = true)
-    val scheduleId: Long? = null,
+    var scheduleId: Long? = null,
 
     // 정기 회비 설정 ID (정기 회비로 자동 생성된 정산만 값이 있음)
     @Column(nullable = true)
@@ -41,25 +41,25 @@ class Settlement(
 
     // 정산 제목 (최대 50자)
     @Column(nullable = false, length = 50)
-    val title: String,
+    var title: String,
 
     // 정산 총금액 (원)
     @Column(nullable = false)
-    val totalAmount: Int,
+    var totalAmount: Int,
 
     // 입금받을 계좌 정보
     @Column(nullable = false, length = 20)
-    val bankName: String,
+    var bankName: String,
 
     @Column(nullable = false, length = 30)
-    val accountNumber: String,
+    var accountNumber: String,
 
     @Column(nullable = false, length = 20)
-    val accountHolder: String,
+    var accountHolder: String,
 
     // 납부 마감 일시
     @Column(nullable = false)
-    val dueAt: OffsetDateTime,
+    var dueAt: OffsetDateTime,
 
     // 정산 진행 상태
     @Enumerated(EnumType.STRING)
@@ -94,6 +94,25 @@ class Settlement(
     // 대상자 전원이 완납하면 정산 완료
     fun complete() {
         status = SettlementStatus.COMPLETED
+    }
+
+    // 정산 수정 (4-11, 4-9 이번 회차 반영): 확인을 마친 값으로 한 번에 변경
+    fun edit(
+        title: String,
+        scheduleId: Long?,
+        totalAmount: Int,
+        bankName: String,
+        accountNumber: String,
+        accountHolder: String,
+        dueAt: OffsetDateTime
+    ) {
+        this.title = title
+        this.scheduleId = scheduleId
+        this.totalAmount = totalAmount
+        this.bankName = bankName
+        this.accountNumber = accountNumber
+        this.accountHolder = accountHolder
+        this.dueAt = dueAt
     }
 
     // 관리자 취소: 정산은 지우지 않고 취소됨으로 남김

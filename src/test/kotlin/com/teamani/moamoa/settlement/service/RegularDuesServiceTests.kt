@@ -36,7 +36,10 @@ class RegularDuesServiceTests : BehaviorSpec({
     val memberRepository: MemberRepository = mock(MemberRepository::class.java)
     val memberService: MemberService = mock(MemberService::class.java)
     val billingService: RegularDuesBillingService = mock(RegularDuesBillingService::class.java)
-    val regularDuesService = RegularDuesService(regularDuesRepository, settlementRepository, memberRepository, memberService, billingService)
+    val settlementService: SettlementService = mock(SettlementService::class.java)
+    val regularDuesService = RegularDuesService(
+        regularDuesRepository, settlementRepository, memberRepository, memberService, billingService, settlementService
+    )
 
     // 기본: 사용자 1은 모임 1의 관리자(구성원 1)
     `when`(memberService.validateAdmin(1L, 1L)).thenReturn(Member(id = 1L, meetingId = 1L, userId = 1L, role = MemberRole.ADMIN))

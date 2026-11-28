@@ -5,9 +5,12 @@ import com.teamani.moamoa.settlement.entity.SettlementStatus
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotEmpty
 import jakarta.validation.constraints.NotNull
+import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Positive
 import jakarta.validation.constraints.Size
+import jakarta.validation.valueextraction.Unwrapping
 import java.time.OffsetDateTime
+import java.util.Optional
 
 // 대상 구성원 중복은 Service에서 검증
 data class SettlementCreateRequest(
@@ -53,6 +56,49 @@ data class SettlementCreateResponse(
     val memberCount: Int,
     val status: SettlementStatus,
     // 공지 자동 연동(#47) 전까지는 항상 null
+    val noticeId: Long?
+)
+
+// 부분 수정 (4-11): 보내지 않은 필드(null)는 유지, null 전송(Optional.empty)은 scheduleId만 연결 해제이고 나머지는 Service에서 400
+// 대상 구성원 비었음·중복은 Service에서 검증
+data class SettlementUpdateRequest(
+    val scheduleId: Optional<Long>? = null,
+
+    @field:Pattern(regexp = NOT_BLANK_PATTERN, message = "정산명은 공백일 수 없습니다.", payload = [Unwrapping.Unwrap::class])
+    @field:Size(max = 50, message = "정산명은 50자 이하여야 합니다.", payload = [Unwrapping.Unwrap::class])
+    val title: Optional<String>? = null,
+
+    @field:Positive(message = "총 정산 금액은 0보다 커야 합니다.", payload = [Unwrapping.Unwrap::class])
+    val totalAmount: Optional<Int>? = null,
+
+    val memberIds: Optional<List<Long>>? = null,
+
+    @field:Pattern(regexp = NOT_BLANK_PATTERN, message = "은행명은 공백일 수 없습니다.", payload = [Unwrapping.Unwrap::class])
+    @field:Size(max = 20, message = "은행명은 20자 이하여야 합니다.", payload = [Unwrapping.Unwrap::class])
+    val bankName: Optional<String>? = null,
+
+    @field:Pattern(regexp = NOT_BLANK_PATTERN, message = "계좌번호는 공백일 수 없습니다.", payload = [Unwrapping.Unwrap::class])
+    @field:Size(max = 30, message = "계좌번호는 30자 이하여야 합니다.", payload = [Unwrapping.Unwrap::class])
+    val accountNumber: Optional<String>? = null,
+
+    @field:Pattern(regexp = NOT_BLANK_PATTERN, message = "예금주는 공백일 수 없습니다.", payload = [Unwrapping.Unwrap::class])
+    @field:Size(max = 20, message = "예금주는 20자 이하여야 합니다.", payload = [Unwrapping.Unwrap::class])
+    val accountHolder: Optional<String>? = null,
+
+    val dueAt: Optional<OffsetDateTime>? = null
+)
+
+data class SettlementUpdateResponse(
+    val settlementId: Long,
+    val title: String,
+    val scheduleId: Long?,
+    val totalAmount: Int,
+    val memberCount: Int,
+    val bankName: String,
+    val accountNumber: String,
+    val accountHolder: String,
+    val dueAt: OffsetDateTime,
+    val status: SettlementStatus,
     val noticeId: Long?
 )
 
@@ -175,3 +221,5 @@ data class PaymentRefundResponse(
     val status: PaymentStatus,
     val refundedAt: OffsetDateTime
 )
+
+private const val NOT_BLANK_PATTERN = "(?s).*\\S.*"

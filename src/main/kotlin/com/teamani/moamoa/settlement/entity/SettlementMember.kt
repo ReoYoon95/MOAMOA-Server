@@ -28,7 +28,7 @@ class SettlementMember(
 
     // 이 구성원이 납부할 금액 (1/N 계산 결과를 저장)
     @Column(nullable = false)
-    val amount: Int,
+    var amount: Int,
 
     // 납부 상태
     @Enumerated(EnumType.STRING)

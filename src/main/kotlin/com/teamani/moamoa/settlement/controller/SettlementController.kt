@@ -13,11 +13,14 @@ import com.teamani.moamoa.settlement.dto.SettlementCreateRequest
 import com.teamani.moamoa.settlement.dto.SettlementCreateResponse
 import com.teamani.moamoa.settlement.dto.SettlementDetailResponse
 import com.teamani.moamoa.settlement.dto.SettlementListResponse
+import com.teamani.moamoa.settlement.dto.SettlementUpdateRequest
+import com.teamani.moamoa.settlement.dto.SettlementUpdateResponse
 import com.teamani.moamoa.settlement.service.SettlementService
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -57,6 +60,18 @@ class SettlementController(
     ): ResponseEntity<CommonResponse<SettlementDetailResponse>> {
         return ResponseEntity.ok(
             CommonResponse(data = settlementService.getSettlement(meetingId, currentUserId, settlementId))
+        )
+    }
+
+    @PatchMapping("/{settlementId}")
+    fun updateSettlement(
+        @CurrentUserId currentUserId: Long,
+        @PathVariable meetingId: Long,
+        @PathVariable settlementId: Long,
+        @Valid @RequestBody request: SettlementUpdateRequest
+    ): ResponseEntity<CommonResponse<SettlementUpdateResponse>> {
+        return ResponseEntity.ok(
+            CommonResponse(data = settlementService.updateSettlement(meetingId, currentUserId, settlementId, request))
         )
     }
 

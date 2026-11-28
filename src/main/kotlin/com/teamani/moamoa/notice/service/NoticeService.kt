@@ -81,12 +81,23 @@ class NoticeService(
     // 정산 취소 시 기존 안내 공지 표시: 제목 앞에 [취소](최대 50자), 본문 맨 앞에 취소 안내와 구분선 (명세 4-12)
     @Transactional
     fun markCanceled(meetingId: Long, noticeId: Long, cancelMessage: String) {
+        markReplaced(meetingId, noticeId, "[취소]", cancelMessage)
+    }
+
+    // 정산 수정 시 기존 안내 공지 표시: 제목 앞에 [변경](최대 50자), 본문 맨 앞에 변경 안내와 구분선 (명세 4-11)
+    @Transactional
+    fun markChanged(meetingId: Long, noticeId: Long) {
+        markReplaced(meetingId, noticeId, "[변경]", "⚠ 이 정산은 변경되었습니다. 새 공지를 확인해 주세요.")
+    }
+
+    // 새 공지로 대체되는 기존 공지 표시 (정산 취소·수정 공통)
+    private fun markReplaced(meetingId: Long, noticeId: Long, label: String, banner: String) {
         val notice = noticeRepository.findById(noticeId)
             .filter { it.meetingId == meetingId }
             .orElseThrow { ApiException(ErrorCode.NOT_FOUND, "공지사항을 찾을 수 없습니다.") }
         notice.update(
-            title = "[취소] ${notice.title}".take(TITLE_MAX_LENGTH),
-            content = "$cancelMessage\n──── 기존 내용 ────\n${notice.content}"
+            title = "$label ${notice.title}".take(TITLE_MAX_LENGTH),
+            content = "$banner\n──── 기존 내용 ────\n${notice.content}"
         )
     }
 

@@ -120,7 +120,28 @@ data class RegularDuesUpdateRequest(
 
     val postNotice: Optional<Boolean>? = null,
 
-    val isActive: Optional<Boolean>? = null
+    val isActive: Optional<Boolean>? = null,
+
+    // 이번 회차 정산에도 제목·금액·계좌 변경을 적용할지 여부 (보내지 않으면 false)
+    val applyToCurrentSettlement: Boolean? = null
+)
+
+// 정기 회비 수정 응답 (4-9): 목록·등록 응답 항목에 이번 회차 반영 결과를 더함
+data class RegularDuesUpdateResponse(
+    val regularDuesId: Long,
+    val title: String,
+    val amount: Int,
+    val cycleType: CycleType,
+    val cycleDay: String,
+    val sendTime: String,
+    val dueDays: Int,
+    val bankName: String,
+    val accountNumber: String,
+    val accountHolder: String,
+    val isActive: Boolean,
+    val postNotice: Boolean,
+    // 반영 true, 제출 기록이 있거나 진행 중이 아니라 반영 안 함 false, 요청하지 않았거나 이번 회차 정산이 없으면 null
+    val currentSettlementApplied: Boolean?
 )
 
 data class RegularDuesDeleteResponse(

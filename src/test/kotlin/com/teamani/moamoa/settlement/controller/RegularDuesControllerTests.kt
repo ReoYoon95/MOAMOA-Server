@@ -9,6 +9,7 @@ import com.teamani.moamoa.settlement.dto.RegularDuesDeleteResponse
 import com.teamani.moamoa.settlement.dto.RegularDuesListResponse
 import com.teamani.moamoa.settlement.dto.RegularDuesResponse
 import com.teamani.moamoa.settlement.dto.RegularDuesUpdateRequest
+import com.teamani.moamoa.settlement.dto.RegularDuesUpdateResponse
 import com.teamani.moamoa.settlement.entity.CycleType
 import com.teamani.moamoa.settlement.service.RegularDuesService
 import io.kotest.core.spec.style.BehaviorSpec
@@ -56,6 +57,23 @@ class RegularDuesControllerTests : BehaviorSpec() {
         accountHolder = "김모아",
         isActive = false,
         postNotice = false
+    )
+
+    // 수정 응답 (4-9): 이번 회차 반영을 요청하지 않아 currentSettlementApplied는 null
+    private val updateResponse = RegularDuesUpdateResponse(
+        regularDuesId = 7L,
+        title = "월 회비",
+        amount = 15000,
+        cycleType = CycleType.MONTHLY,
+        cycleDay = "10",
+        sendTime = "09:00",
+        dueDays = 7,
+        bankName = "국민은행",
+        accountNumber = "123456789012",
+        accountHolder = "김모아",
+        isActive = false,
+        postNotice = false,
+        currentSettlementApplied = null
     )
 
     init {
@@ -267,7 +285,7 @@ class RegularDuesControllerTests : BehaviorSpec() {
             When("API를 호출하면") {
                 Then("보내지 않은 필드는 null(미전송)로 전달되고 200 OK와 수정 결과를 반환한다") {
                     val request = RegularDuesUpdateRequest(amount = Optional.of(15000), isActive = Optional.of(false))
-                    `when`(regularDuesService.updateRegularDues(1L, 1L, 7L, request)).thenReturn(response)
+                    `when`(regularDuesService.updateRegularDues(1L, 1L, 7L, request)).thenReturn(updateResponse)
 
                     mockMvc.patch("/v1/meetings/1/regular-dues/7") {
                         header(HttpHeaders.AUTHORIZATION, BEARER_TOKEN)

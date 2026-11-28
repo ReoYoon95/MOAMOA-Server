@@ -21,7 +21,10 @@ import com.teamani.moamoa.settlement.dto.SettlementCreateResponse
 import com.teamani.moamoa.settlement.dto.SettlementDetailResponse
 import com.teamani.moamoa.settlement.dto.SettlementListResponse
 import com.teamani.moamoa.settlement.dto.SettlementSummaryResponse
+import com.teamani.moamoa.settlement.dto.SettlementUpdateRequest
+import com.teamani.moamoa.settlement.dto.SettlementUpdateResponse
 import com.teamani.moamoa.settlement.entity.PaymentStatus
+import com.teamani.moamoa.settlement.entity.RegularDues
 import com.teamani.moamoa.settlement.entity.Settlement
 import com.teamani.moamoa.settlement.entity.SettlementMember
 import com.teamani.moamoa.settlement.entity.SettlementStatus
@@ -34,6 +37,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.Optional
 
 @Service
 class SettlementService(
@@ -319,6 +323,188 @@ class SettlementService(
         )
     }
 
+    // 정산 수정 (4-11): 진행 중인 정산만, 금액·대상 인원은 제출 기록이 없을 때만 변경
+    // 정기 회비 회차 정산은 총액을 수정할 수 없고(회비 금액은 4-9에서 변경), 대상 인원이 바뀌어도 1인 금액 유지
+    @Transactional
+    fun updateSettlement(
+        meetingId: Long,
+        userId: Long,
+        settlementId: Long,
+        request: SettlementUpdateRequest
+    ): SettlementUpdateResponse {
+        // 요청만으로 판단할 수 있는 오류(400)를 권한 검증보다 먼저 확인 (명세 공통 오류 순서)
+        val title = request.title.valueOrKeep("정산명")
+        val totalAmount = request.totalAmount.valueOrKeep("총 정산 금액")
+        val memberIds = request.memberIds.valueOrKeep("정산 대상 구성원")
+        val bankName = request.bankName.valueOrKeep("은행명")
+        val accountNumber = request.accountNumber.valueOrKeep("계좌번호")
+        val accountHolder = request.accountHolder.valueOrKeep("예금주")
+        val dueAt = request.dueAt.valueOrKeep("납부 기한")
+        if (memberIds != null) {
+            if (memberIds.isEmpty()) {
+                throw ApiException(ErrorCode.VALIDATION_ERROR, "정산 대상 구성원은 1명 이상이어야 합니다.")
+            }
+            if (memberIds.toSet().size != memberIds.size) {
+                throw ApiException(ErrorCode.VALIDATION_ERROR, "정산 대상 구성원이 중복되었습니다.")
+            }
+        }
+        if (totalAmount != null && memberIds != null && totalAmount < memberIds.size) {
+            throw ApiException(ErrorCode.VALIDATION_ERROR, "총 정산 금액은 대상 인원수 이상이어야 합니다.")
+        }
+
+        // 모임 없음·종료 404 → 구성원 아님·ADMIN 아님 403, 새 공지 작성자는 수정한 관리자
+        val editorMemberId = checkNotNull(memberService.validateAdmin(meetingId, userId).id) { "구성원 식별자가 없습니다." }
+        // 새로 추가되는 구성원만 모임 구성원인지 확인 (이미 대상인 구성원은 모임을 나갔어도 목록에 그대로 둘 수 있음)
+        // 정산 잠금 전에 납부 항목 엔티티를 불러오면 잠금 조회 때 그 값이 재사용되므로 구성원 ID만 조회
+        val addedMemberIds = memberIds?.let { it - settlementMemberRepository.findMemberIdsBySettlementId(settlementId).toSet() }
+        addedMemberIds?.takeIf { it.isNotEmpty() }?.let { validateTargetMembers(meetingId, it) }
+
+        // 잠금 순서: 공지 → 일정 → 정산 (정산 취소·공지 삭제의 공지 → 정산, 정산 생성·일정 삭제의 일정 → 정산과 같은 방향)
+        // 정산 엔티티를 미리 불러오면 잠금 조회 때 그 값이 재사용되므로 공지 ID만 조회
+        settlementRepository.findNoticeIdByIdAndMeetingId(settlementId, meetingId)
+            ?.let { noticeService.lockNotice(meetingId, it) }
+        // scheduleId를 null로 보내면(Optional.empty) 연결 해제
+        val newScheduleId = request.scheduleId?.orElse(null)
+        validateSchedule(meetingId, newScheduleId)
+        // 납부 제출과 같은 정산 잠금으로 조회해, 제출이 끝난 뒤의 납부 상태로 판단
+        val settlement = lockSettlement(meetingId, settlementId)
+        if (settlement.status != SettlementStatus.IN_PROGRESS) {
+            throw ApiException(ErrorCode.UNPROCESSABLE_ENTITY, "진행 중인 정산만 수정할 수 있습니다.")
+        }
+        // 정기 회비 회차 정산은 청구 주기로 판단 (정기 회비가 삭제돼 연결이 풀려도 회차 정산으로 유지)
+        val isPeriodSettlement = settlement.billingPeriod != null
+        if (isPeriodSettlement && totalAmount != null) {
+            throw ApiException(
+                ErrorCode.UNPROCESSABLE_ENTITY,
+                "정기 회비 회차 정산은 총액을 수정할 수 없습니다. 회비 금액은 정기 회비 수정에서 바꿔 주세요."
+            )
+        }
+
+        val payments = settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(settlementId)
+        val currentMemberIds = payments.map { it.memberId }.toSet()
+        val targetIds = memberIds ?: payments.map { it.memberId }
+        // 잠금 전에 확인한 뒤 다른 수정으로 대상이 바뀌어, 확인하지 않은 구성원이 새로 추가되는 경우 404
+        if ((targetIds - currentMemberIds - addedMemberIds.orEmpty()).isNotEmpty()) {
+            throw ApiException(ErrorCode.NOT_FOUND, "정산 대상 구성원을 찾을 수 없습니다.")
+        }
+        val membersChanged = targetIds.toSet() != currentMemberIds
+        val amountChanged = totalAmount != null && totalAmount != settlement.totalAmount
+        // 일반 정산은 금액·인원이 바뀌면 1/N이 달라져 이미 낸 금액과 어긋나므로 제출 기록이 하나라도 있으면 막음
+        // 회차 정산은 1인 금액이 고정이라 다른 구성원 금액이 바뀌지 않으므로, 빠지는 구성원에게 제출 기록이 있을 때만 막음
+        val blocked = if (isPeriodSettlement) {
+            hasSubmission(payments.filter { it.memberId !in targetIds })
+        } else {
+            (membersChanged || amountChanged) && hasSubmission(payments)
+        }
+        if (blocked) {
+            throw ApiException(
+                ErrorCode.UNPROCESSABLE_ENTITY,
+                if (isPeriodSettlement) {
+                    "납부를 제출한 구성원은 대상에서 뺄 수 없습니다."
+                } else {
+                    "납부를 제출한 구성원이 있어 금액이나 대상 인원을 바꿀 수 없습니다. 정산을 취소한 뒤 새로 만들어 주세요."
+                }
+            )
+        }
+
+        // 회차 정산은 1인 금액 유지(총액 = 1인 금액 × 인원), 일반 정산은 1/N 다시 계산
+        val perMemberAmount = payments.first().amount
+        val newTotalAmount = if (isPeriodSettlement) {
+            periodTotalAmount(perMemberAmount, targetIds.size)
+        } else {
+            totalAmount ?: settlement.totalAmount
+        }
+        if (newTotalAmount < targetIds.size) {
+            throw ApiException(ErrorCode.VALIDATION_ERROR, "총 정산 금액은 대상 인원수 이상이어야 합니다.")
+        }
+        if (membersChanged || amountChanged) {
+            val amounts = if (isPeriodSettlement) {
+                targetIds.associateWith { perMemberAmount }
+            } else {
+                splitAmount(newTotalAmount, targetIds, settlement.createdBy ?: editorMemberId)
+            }
+            replacePayments(settlementId, payments, amounts)
+        }
+
+        val changedItems = changedItems(
+            amountChanged = amountChanged,
+            membersChanged = membersChanged,
+            accountChanged = (bankName ?: settlement.bankName) != settlement.bankName ||
+                (accountNumber ?: settlement.accountNumber) != settlement.accountNumber ||
+                (accountHolder ?: settlement.accountHolder) != settlement.accountHolder,
+            dueAtChanged = dueAt != null && !dueAt.isEqual(settlement.dueAt)
+        )
+        settlement.edit(
+            title = title ?: settlement.title,
+            scheduleId = if (request.scheduleId != null) newScheduleId else settlement.scheduleId,
+            totalAmount = newTotalAmount,
+            bankName = bankName ?: settlement.bankName,
+            accountNumber = accountNumber ?: settlement.accountNumber,
+            accountHolder = accountHolder ?: settlement.accountHolder,
+            dueAt = dueAt ?: settlement.dueAt
+        )
+        val baseAmount = if (isPeriodSettlement) perMemberAmount else newTotalAmount / targetIds.size
+        replaceNoticeIfChanged(meetingId, settlement, editorMemberId, changedItems, baseAmount)
+
+        // TODO: 푸시 알림 - 정산 대상 구성원에게 정산 변경 알림 발송
+
+        return SettlementUpdateResponse(
+            settlementId = settlementId,
+            title = settlement.title,
+            scheduleId = settlement.scheduleId,
+            totalAmount = settlement.totalAmount,
+            memberCount = targetIds.size,
+            bankName = settlement.bankName,
+            accountNumber = settlement.accountNumber,
+            accountHolder = settlement.accountHolder,
+            dueAt = settlement.dueAt.withOffsetSameInstant(KST),
+            status = settlement.status,
+            noticeId = settlement.noticeId
+        )
+    }
+
+    // 정기 회비 수정(4-9)의 이번 회차 반영: 바뀐 제목·1인 금액·계좌를 이번 회차 정산에도 적용
+    // 정기 회비 잠금을 잡은 뒤 호출 (잠금 순서: 정기 회비 → 공지 → 정산)
+    // 반영하면 true, 진행 중이 아니거나 제출 기록이 있으면 false, 이번 회차 정산이 없으면 null
+    @Transactional
+    fun applyRegularDuesToCurrentSettlement(regularDues: RegularDues, editorMemberId: Long, now: OffsetDateTime): Boolean? {
+        val meetingId = regularDues.meetingId
+        val regularDuesId = checkNotNull(regularDues.id) { "정기 회비 식별자가 없습니다." }
+        val period = billingPeriod(regularDues, now.withOffsetSameInstant(KST).toLocalDate())
+        // 잠금 조회 전에 엔티티를 불러오지 않도록 ID만 조회
+        val settlementId = settlementRepository.findIdByRegularDuesIdAndBillingPeriod(regularDuesId, period) ?: return null
+
+        settlementRepository.findNoticeIdByIdAndMeetingId(settlementId, meetingId)
+            ?.let { noticeService.lockNotice(meetingId, it) }
+        val settlement = lockSettlement(meetingId, settlementId)
+        val payments = settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(settlementId)
+        if (settlement.status != SettlementStatus.IN_PROGRESS || hasSubmission(payments)) {
+            return false
+        }
+
+        val amountChanged = payments.any { it.amount != regularDues.amount }
+        payments.forEach { it.amount = regularDues.amount }
+        val changedItems = changedItems(
+            amountChanged = amountChanged,
+            membersChanged = false,
+            accountChanged = regularDues.bankName != settlement.bankName ||
+                regularDues.accountNumber != settlement.accountNumber ||
+                regularDues.accountHolder != settlement.accountHolder,
+            dueAtChanged = false
+        )
+        settlement.edit(
+            title = regularDues.title,
+            scheduleId = settlement.scheduleId,
+            totalAmount = periodTotalAmount(regularDues.amount, payments.size),
+            bankName = regularDues.bankName,
+            accountNumber = regularDues.accountNumber,
+            accountHolder = regularDues.accountHolder,
+            dueAt = settlement.dueAt
+        )
+        replaceNoticeIfChanged(meetingId, settlement, editorMemberId, changedItems, regularDues.amount)
+        return true
+    }
+
     // 환불 처리 (4-13): 취소된 정산의 완납 항목만, 앱 밖에서 돌려준 뒤 기록
     @Transactional
     fun refundPayment(meetingId: Long, userId: Long, settlementId: Long, paymentId: Long): PaymentRefundResponse {
@@ -414,15 +600,102 @@ class SettlementService(
         }
     }
 
+    // 부분 수정 값: 보내지 않으면 null(유지), null로 보내면(Optional.empty) 비울 수 없는 항목이라 400
+    private fun <T : Any> Optional<T>?.valueOrKeep(name: String): T? =
+        this?.orElseThrow { ApiException(ErrorCode.VALIDATION_ERROR, "${name}은(는) 비울 수 없습니다.") }
+
+    // 제출 기록: 확인 대기·완납·반려(제출 일시가 남음) 모두 포함. 반려되었더라도 실제로 입금했을 수 있음 (명세 4-11)
+    private fun hasSubmission(payments: List<SettlementMember>): Boolean =
+        payments.any { it.submittedAt != null || it.status != PaymentStatus.UNPAID }
+
+    // 회차 정산 총액 = 1인 금액 × 인원 (정산 금액 저장 범위(Int)를 넘으면 400)
+    private fun periodTotalAmount(perMemberAmount: Int, memberCount: Int): Int {
+        val total = perMemberAmount.toLong() * memberCount
+        if (total > Int.MAX_VALUE) {
+            throw ApiException(ErrorCode.VALIDATION_ERROR, "정산 총액이 최대 금액을 넘습니다.")
+        }
+        return total.toInt()
+    }
+
+    // 빠진 구성원의 납부 항목은 삭제, 남은 구성원은 금액만 변경, 추가된 구성원은 미납으로 생성
+    private fun replacePayments(settlementId: Long, payments: List<SettlementMember>, amounts: Map<Long, Int>) {
+        settlementMemberRepository.deleteAll(payments.filter { it.memberId !in amounts })
+        payments.forEach { payment -> amounts[payment.memberId]?.let { payment.amount = it } }
+        val existing = payments.map { it.memberId }.toSet()
+        settlementMemberRepository.saveAll(
+            amounts.filterKeys { it !in existing }.map { (memberId, amount) ->
+                SettlementMember(settlementId = settlementId, memberId = memberId, amount = amount)
+            }
+        )
+    }
+
+    // 새 공지 첫 줄에 쓰는 바뀐 항목 (명세 순서: 금액, 대상 인원, 계좌, 납부 기한)
+    private fun changedItems(amountChanged: Boolean, membersChanged: Boolean, accountChanged: Boolean, dueAtChanged: Boolean) =
+        listOfNotNull(
+            "금액".takeIf { amountChanged },
+            "대상 인원".takeIf { membersChanged },
+            "계좌".takeIf { accountChanged },
+            "납부 기한".takeIf { dueAtChanged }
+        )
+
+    // 연결 공지가 있고 금액·대상 인원·계좌·납부 기한이 실제로 바뀌었을 때만 기존 공지에 [변경] 표시 후 새 공지로 교체
+    // 공지 처리에 실패하면 같은 트랜잭션이라 수정도 함께 롤백됨
+    private fun replaceNoticeIfChanged(
+        meetingId: Long,
+        settlement: Settlement,
+        editorMemberId: Long,
+        changedItems: List<String>,
+        amountPerMember: Int
+    ) {
+        val noticeId = settlement.noticeId ?: return
+        if (changedItems.isEmpty()) {
+            return
+        }
+        noticeService.markChanged(meetingId, noticeId)
+        settlement.noticeId = noticeService.createNoticeByMember(
+            meetingId,
+            editorMemberId,
+            changedNotice(settlement, changedItems, amountPerMember)
+        ).noticeId
+    }
+
+    // 새 변경 공지: 제목 [정산 변경]·[회비 변경] {정산명} (수정 MM.DD), 50자를 넘으면 정산명을 줄임
+    // 본문 첫 줄에 바뀐 항목, 그 아래 정산 생성(4-1)·정기 회비 청구 공지와 같은 형식
+    private fun changedNotice(settlement: Settlement, changedItems: List<String>, amountPerMember: Int): NoticeCreateRequest {
+        val isPeriodSettlement = settlement.billingPeriod != null
+        val label = if (isPeriodSettlement) "[회비 변경]" else "[정산 변경]"
+        val suffix = " (수정 ${OffsetDateTime.now().withOffsetSameInstant(KST).format(NOTICE_CHANGED_DATE_FORMAT)})"
+        val titleLength = NOTICE_TITLE_MAX_LENGTH - label.length - 1 - suffix.length
+        val body = if (isPeriodSettlement) {
+            regularDuesNoticeContent(settlement, amountPerMember)
+        } else {
+            settlementNoticeContent(settlement, amountPerMember)
+        }
+        return NoticeCreateRequest(
+            title = "$label ${settlement.title.take(titleLength)}$suffix",
+            content = "변경된 항목: ${changedItems.joinToString(", ")}\n$body"
+        )
+    }
+
+    // 정기 회비 자동 청구 공지(RegularDuesBillingService)와 같은 본문 형식
+    private fun regularDuesNoticeContent(settlement: Settlement, amountPerMember: Int) =
+        "회비명: ${settlement.title}\n" +
+            "1인당 금액: ${"%,d".format(Locale.KOREA, amountPerMember)}원\n" +
+            "입금 계좌: ${settlement.bankName} ${settlement.accountNumber} (${settlement.accountHolder})\n" +
+            "납부 기한: ${settlement.dueAt.withOffsetSameInstant(KST).format(NOTICE_DUE_AT_FORMAT)}"
+
     // 정산 안내 공지: 제목은 공지 제목 최대 길이를 넘으면 잘라 쓰고, 내용에는 정산명 전체를 담음
     private fun settlementNotice(settlement: Settlement, amountPerMember: Int) = NoticeCreateRequest(
         title = "[정산] ${settlement.title}".take(NOTICE_TITLE_MAX_LENGTH),
-        content = "정산명: ${settlement.title}\n" +
+        content = settlementNoticeContent(settlement, amountPerMember)
+    )
+
+    private fun settlementNoticeContent(settlement: Settlement, amountPerMember: Int) =
+        "정산명: ${settlement.title}\n" +
             "기본 1인당 금액: ${"%,d".format(Locale.KOREA, amountPerMember)}원\n" +
             "입금 계좌: ${settlement.bankName} ${settlement.accountNumber} (${settlement.accountHolder})\n" +
             "납부 기한: ${settlement.dueAt.withOffsetSameInstant(KST).format(NOTICE_DUE_AT_FORMAT)}\n" +
             "개인별 실제 납부 금액은 정산 상세에서 확인해 주세요."
-    )
 
     // 기존 안내 공지 맨 앞에 넣는 취소 안내 (사유가 없으면 사유 부분 생략)
     private fun canceledBanner(reason: String?) =
@@ -445,6 +718,7 @@ class SettlementService(
         private const val NOTICE_TITLE_MAX_LENGTH = 50
         private const val WITHDRAWN_USER_NAME = "탈퇴한 사용자"
         private val NOTICE_DUE_AT_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+        private val NOTICE_CHANGED_DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("MM.dd")
     }
 }
 

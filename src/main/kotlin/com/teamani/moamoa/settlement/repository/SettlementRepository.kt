@@ -19,6 +19,10 @@ interface SettlementRepository : JpaRepository<Settlement, Long> {
     // 정기 회비의 해당 회차가 이미 청구되었는지 확인
     fun existsByRegularDuesIdAndBillingPeriod(regularDuesId: Long, billingPeriod: LocalDate): Boolean
 
+    // 정기 회비 수정(4-9)의 이번 회차 정산 ID. 잠금 조회 전에 엔티티를 불러오지 않도록 ID만 조회
+    @Query("select s.id from Settlement s where s.regularDuesId = :regularDuesId and s.billingPeriod = :billingPeriod")
+    fun findIdByRegularDuesIdAndBillingPeriod(regularDuesId: Long, billingPeriod: LocalDate): Long?
+
     // 여러 정기 회비의 회차 정산을 한 번에 조회 (청구 대상 선정 시 회비마다 따로 조회하지 않도록)
     fun findAllByRegularDuesIdInAndBillingPeriodIn(
         regularDuesIds: Collection<Long>,

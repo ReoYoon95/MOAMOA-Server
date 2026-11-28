@@ -6,8 +6,8 @@ import com.teamani.moamoa.settlement.dto.RegularDuesCreateRequest
 import com.teamani.moamoa.settlement.dto.RegularDuesCreateResponse
 import com.teamani.moamoa.settlement.dto.RegularDuesDeleteResponse
 import com.teamani.moamoa.settlement.dto.RegularDuesListResponse
-import com.teamani.moamoa.settlement.dto.RegularDuesResponse
 import com.teamani.moamoa.settlement.dto.RegularDuesUpdateRequest
+import com.teamani.moamoa.settlement.dto.RegularDuesUpdateResponse
 import com.teamani.moamoa.settlement.service.RegularDuesService
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
@@ -52,7 +52,7 @@ class RegularDuesController(
         @PathVariable meetingId: Long,
         @PathVariable regularDuesId: Long,
         @Valid @RequestBody request: RegularDuesUpdateRequest
-    ): ResponseEntity<CommonResponse<RegularDuesResponse>> {
+    ): ResponseEntity<CommonResponse<RegularDuesUpdateResponse>> {
         return ResponseEntity.ok(
             CommonResponse(data = regularDuesService.updateRegularDues(meetingId, currentUserId, regularDuesId, request))
         )
