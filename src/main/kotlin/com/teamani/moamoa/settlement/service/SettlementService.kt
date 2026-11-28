@@ -383,9 +383,9 @@ class SettlementService(
         val payments = settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(settlementId)
         val currentMemberIds = payments.map { it.memberId }.toSet()
         val targetIds = memberIds ?: payments.map { it.memberId }
-        // 잠금 전에 확인한 뒤 다른 수정으로 대상이 바뀌어, 확인하지 않은 구성원이 새로 추가되는 경우 404
+        // 잠금 전에 읽은 뒤 다른 관리자가 대상을 먼저 바꿨으면, 옛 화면 기준 요청으로 덮어쓰지 않도록 409
         if ((targetIds - currentMemberIds - addedMemberIds.orEmpty()).isNotEmpty()) {
-            throw ApiException(ErrorCode.NOT_FOUND, "정산 대상 구성원을 찾을 수 없습니다.")
+            throw ApiException(ErrorCode.CONFLICT, "다른 관리자가 정산 대상을 먼저 수정했습니다. 새로 고친 뒤 다시 시도해 주세요.")
         }
         val membersChanged = targetIds.toSet() != currentMemberIds
         val amountChanged = totalAmount != null && totalAmount != settlement.totalAmount

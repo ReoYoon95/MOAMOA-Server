@@ -115,10 +115,43 @@ class SettlementUpdateConcurrencyTests : BehaviorSpec() {
                     payment?.status shouldBe PaymentStatus.PENDING
                 }
             }
+
+            When("한 관리자가 대상을 바꾸는 중에 다른 관리자가 옛 대상 목록으로 수정하면") {
+                Then("뒤 요청은 앞 수정이 끝날 때까지 기다린 뒤 덮어쓰지 않고 409이다") {
+                    val saved = savedSettlement()
+                    val otherMemberId = checkNotNull(
+                        memberRepository.save(Member(meetingId = saved.meetingId, userId = OTHER_USER_ID, role = MemberRole.MEMBER)).id
+                    )
+                    // 앞 수정이 정산을 잠그고 납부 항목을 조회하기 직전에 멈춤
+                    val pause = Pause()
+                    doAnswer(beforeReal(settlementMemberRepository, pause::hold)).`when`(settlementMemberRepository)
+                        .findAllBySettlementIdOrderByIdAsc(anyLong())
+                    val executor = Executors.newFixedThreadPool(2)
+
+                    try {
+                        // 앞 수정: [관리자, 구성원] → [관리자, 다른 구성원]
+                        val first = executor.start { updateMembers(saved, listOf(saved.adminMemberId, otherMemberId)) }
+                        pause.awaitPaused()
+                        // 뒤 수정: 옛 화면 기준으로 [관리자, 구성원]을 보냄 (잠금 전에는 바뀐 것이 없어 보임)
+                        val second = executor.start { updateMembers(saved, listOf(saved.adminMemberId, saved.memberId)) }
+
+                        shouldThrow<TimeoutException> { second.get(WAIT_MILLIS, TimeUnit.MILLISECONDS) }
+                        pause.release()
+
+                        first.get(10, TimeUnit.SECONDS).shouldBeNull()
+                        (second.get(10, TimeUnit.SECONDS) as ApiException).errorCode shouldBe ErrorCode.CONFLICT
+                    } finally {
+                        pause.release()
+                        executor.shutdownNow()
+                    }
+                    settlementMemberRepository.findAllBySettlementIdOrderByIdAsc(saved.settlementId).map { it.memberId }.toSet() shouldBe
+                        setOf(saved.adminMemberId, otherMemberId)
+                }
+            }
         }
     }
 
-    private data class SavedSettlement(val meetingId: Long, val memberId: Long, val settlementId: Long)
+    private data class SavedSettlement(val meetingId: Long, val adminMemberId: Long, val memberId: Long, val settlementId: Long)
 
     // 관리자(ADMIN_USER_ID)와 구성원(MEMBER_USER_ID)이 대상인 30,000원 정산
     private fun savedSettlement(): SavedSettlement {
@@ -138,8 +171,13 @@ class SettlementUpdateConcurrencyTests : BehaviorSpec() {
                 dueAt = OffsetDateTime.parse("2099-10-20T23:59:00+09:00")
             )
         ).settlementId
-        return SavedSettlement(meetingId, memberId, settlementId)
+        return SavedSettlement(meetingId, adminMemberId, memberId, settlementId)
     }
+
+    private fun updateMembers(saved: SavedSettlement, memberIds: List<Long>) =
+        settlementService.updateSettlement(
+            saved.meetingId, ADMIN_USER_ID, saved.settlementId, SettlementUpdateRequest(memberIds = Optional.of(memberIds))
+        )
 
     // 총액 30,000원 → 40,000원 (2명이라 1인 20,000원)
     private fun updateAmount(saved: SavedSettlement) =
@@ -180,6 +218,7 @@ class SettlementUpdateConcurrencyTests : BehaviorSpec() {
     companion object {
         private const val ADMIN_USER_ID = 9831L
         private const val MEMBER_USER_ID = 9832L
+        private const val OTHER_USER_ID = 9833L
 
         // 다른 요청을 기다리는 시간 (H2 잠금 대기 2초보다 짧게)
         private const val WAIT_MILLIS = 500L
